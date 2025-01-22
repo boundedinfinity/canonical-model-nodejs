@@ -1,0 +1,9 @@
+// https://countrycode.org/
+[
+    {
+        "country": "Afghanistan",
+        "code": 93,
+        "iso-2": "AF",
+        "iso-3": "AFG"
+    }
+]

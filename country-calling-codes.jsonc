@@ -1,0 +1,9 @@
+// https://countrycode.org/
+[
+    {
+        "calling-code": 1,
+        "country-codes": [
+            "US"
+        ]
+    }
+]
