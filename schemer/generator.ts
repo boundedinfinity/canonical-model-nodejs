@@ -1,10 +1,11 @@
 // https://www.fullstory.com/blog/discriminated-unions-and-exhaustiveness-checking-in-typescript/
 
-import { ClassDeclaration, Project, ScriptTarget, SourceFile, StructureKind, VariableDeclarationKind, VariableStatement, VariableDeclarationList, } from 'ts-morph'
-import type { EnumMemberStructure, ImportDeclarationStructure, OptionalKind, PropertyDeclarationStructure, VariableDeclarationStructure } from 'ts-morph'
+// import { ClassDeclaration, Project, ScriptTarget, SourceFile, StructureKind, VariableDeclarationKind, VariableStatement, VariableDeclarationList, } from 'ts-morph'
+// import type { EnumMemberStructure, ImportDeclarationStructure, OptionalKind, PropertyDeclarationStructure, VariableDeclarationStructure } from 'ts-morph'
 import npath from 'node:path'
 import type { EnumMember, ObjectSchema, ProjectSchema, KindSchema } from './schema'
-
+import { stat } from 'node:fs'
+import { TypeScriptLanguageGenerator } from './ts-generator'
 
 
 interface ImportDeclaration {
@@ -306,8 +307,6 @@ export class Generator {
                 break
         }
     }
-
-
 
     private processJson(schema: KindSchema, sourceFile: SourceFile) {
 
