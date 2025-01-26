@@ -540,13 +540,13 @@ export class TypeScriptClass {
 
     emit(indent: number = 0): string {
         const lines = new Liner(indent)
-        let words: string[] = []
+        let worder = new Worder()
 
-        if (this.exported) words.push('export')
-        words.push('class')
-        words.push(this.name)
-        words.push('{')
-        lines.push(...words)
+        if (this.exported) worder.push('export')
+        worder.push('class')
+        worder.push(this.name)
+        worder.push('{')
+        lines.push(worder.emit())
 
         this.properties.forEach(property => {
             lines.push(property.emit(indent + 1))

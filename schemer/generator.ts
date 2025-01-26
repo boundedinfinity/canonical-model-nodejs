@@ -122,6 +122,9 @@ export class Generator {
         const assignment = new TypeScriptAssignement({ name: tsName }, ['export', 'const'])
         const fluid = new TypescriptFluidFunction('z')
 
+        if (schemaUtils.hasValidation(kind)) {
+            file.getImport('zod').addNamedImport('z')
+        }
 
         const process = (current: KindSchema) => {
             switch (kind.kind) {
@@ -220,9 +223,7 @@ export class Generator {
 
         handleProp(kind)
 
-        if (schemaUtils.hasValidation(kind)) {
-            file.getImport('zod').addNamedImport('z')
-        }
+
 
         if (!kind.optional) {
             prop.set().optional(kind.optional).default(tsutils.defaultValue(kind))
