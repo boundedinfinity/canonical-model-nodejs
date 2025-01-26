@@ -1,198 +1,45 @@
 // https://www.fullstory.com/blog/discriminated-unions-and-exhaustiveness-checking-in-typescript/
 
-// import { ClassDeclaration, Project, ScriptTarget, SourceFile, StructureKind, VariableDeclarationKind, VariableStatement, VariableDeclarationList, } from 'ts-morph'
-// import type { EnumMemberStructure, ImportDeclarationStructure, OptionalKind, PropertyDeclarationStructure, VariableDeclarationStructure } from 'ts-morph'
 import npath from 'node:path'
-import type { EnumMember, ObjectSchema, ProjectSchema, KindSchema } from './schema'
+import type { ProjectSchema, KindSchema } from './schema'
+import { schemaUtils } from './schema'
 import { stat } from 'node:fs'
-import { TypeScriptLanguageGenerator } from './ts-generator'
-
-
-interface ImportDeclaration {
-    moduleSpecifier: string
-    namedImports: (string | {
-        name: string;
-        isTypeOnly?: boolean;
-        alias?: string;
-    })[]
-}
-
-const utils = {
-    names: {
-        normal(s: string): string {
-            return s.trim().replace(/  +/g, ' ')
-        },
-        upperFirst(s: string): string {
-            return String(s).charAt(0).toLocaleUpperCase() + String(s).slice(1);
-        },
-        lowerFirst(s: string): string {
-            return String(s).charAt(0).toLocaleLowerCase() + String(s).slice(1);
-        },
-        phrase2Pascal(s: string): string {
-            return utils.names.normal(s).split(" ").map(c => utils.names.upperFirst(c)).join("")
-        },
-        phrase2Camel(s: string): string {
-            const words = utils.names.normal(s).split(" ")
-            return utils.names.lowerFirst(words[0]) + utils.names.phrase2Pascal(words.splice(1).join(" "))
-        },
-        phrase2Snake(s: string): string {
-            return utils.names.normal(s).toLocaleLowerCase().replaceAll(" ", "_")
-        },
-        phrase2SnakeUpper(s: string): string {
-            return utils.names.normal(s).toLocaleUpperCase().replaceAll(" ", "_")
-        },
-        phrase2Kebab(s: string): string {
-            return utils.names.normal(s).toLocaleLowerCase().replaceAll(" ", "-")
-        },
-        phrase2KebabUpper(s: string): string {
-            return utils.names.normal(s).toLocaleUpperCase().replaceAll(" ", "-")
-        }
-    }
-}
+import {
+    tsutils,
+    TypeScriptLanguageGenerator, TypeScriptFile, TypeScriptClass, TypeScriptProperty,
+    TypeScriptConstructor, TypeScriptAssignement, TypescriptFluidFunction
+} from './ts-generator'
+import utils from './utils'
 
 export class Generator {
     private registry = new Map<string, KindSchema>
-    private tsProject = new Project({
-        compilerOptions: { target: ScriptTarget.ESNext },
-        libFolderPath: '$lib',
-    })
+    private tsProject = new TypeScriptLanguageGenerator({ formatOutput: true })
     private project: ProjectSchema
-    private importMap: Map<string, ImportDeclaration> = new Map()
     private rootDir = npath.join(import.meta.url, "..")
 
     constructor(project: ProjectSchema) {
         this.project = project
-
-        this.registerImportDecl({
-            moduleSpecifier: 'uuid',
-            namedImports: [{ name: 'v4', alias: 'uuid' }, { name: 'NIL', alias: 'NIL_UUID' }]
-        })
-
-        this.registerImportDecl({
-            moduleSpecifier: "drizzle-orm/sqlite-core",
-            namedImports: ["int", "text", "sqliteTable"]
-        })
-
-        this.registerImportDecl({ moduleSpecifier: "zod", namedImports: ["z"] })
     }
 
     private ensureRegister(kind: KindSchema) {
-        const typ = this.getKindKind(kind)
-        const name = this.getKindName(kind)
+        const typ = schemaUtils.getKindKind(kind)
+        const name = schemaUtils.getKindName(kind)
 
         if (!this.registry.has(name)) {
             this.registry.set(name, kind)
         }
-
-        const decl: ImportDeclaration = {
-            moduleSpecifier: this.convertName('ts-module-specifier', kind),
-            namedImports: [
-                this.convertName('ts-class', kind),
-                this.convertName('zod-schema', kind),
-            ]
-        }
-
-        if (!this.importMap.has(typ)) {
-            this.importMap.set(typ, decl)
-        }
     }
 
-    private convertName = (
-        typ: 'ts-class' | 'ts-property' | 'file' | 'ts-module-specifier' | 'zod-schema' | 'zod-property',
-        schema: KindSchema
-    ): string => {
-        let name: string = this.getKindName(schema)
+    private isRegistered(nameOrKind: string | KindSchema): boolean {
+        let name: string
+        if (typeof nameOrKind === 'string')
+            name = nameOrKind
+        else
+            name = schemaUtils.getKindName(nameOrKind)
 
-        switch (typ) {
-            case 'ts-class':
-                name = utils.names.phrase2Pascal(name)
-                break
-            case 'ts-property':
-                name = utils.names.phrase2Camel(name)
-                if (schema.optional)
-                    name = name + '?'
-                break
-            case 'zod-schema':
-                name = utils.names.phrase2Pascal(name) + 'Zod'
-                break
-            case 'zod-property':
-                name = utils.names.phrase2Camel(name)
-                break
-            case 'file':
-                name = utils.names.phrase2Kebab(name)
-                name += '.ts'
-                break
-            case 'ts-module-specifier':
-                name = './' + utils.names.phrase2Kebab(name)
-                break
-            default:
-                throw new Error(`unknown type ${typ}`)
-        }
-
-        return name
+        return this.registry.has(name)
     }
 
-    private getKindName(kind: KindSchema): string {
-        let name: string | undefined
-
-        switch (kind.kind) {
-            case 'bool':
-            case 'enum':
-            case 'float':
-            case 'int':
-            case 'string':
-            case 'object':
-                name = kind.name
-                break
-            case 'array':
-                name = kind.name || this.getKindName(kind.items)
-                break
-            case 'ref':
-                name = kind.name || this.getKindName(kind.ref)
-                break
-        }
-
-        if (!name) {
-            throw new Error(`getKindName: ${kind.kind} must have a name`)
-        }
-
-        return name!
-    }
-
-    private getKindKind(kind: KindSchema): string {
-        let name: string | undefined
-
-        switch (kind.kind) {
-            case 'bool':
-                name = 'boolean'
-                break
-            case 'float':
-            case 'int':
-                name = 'number'
-                break
-            case 'string':
-                name = 'string'
-                break
-            case 'ref':
-                name = this.getKindKind(kind.ref)
-                break
-            case 'array':
-                name = this.getKindKind(kind.items) + '[]'
-                break
-            case 'enum':
-                break
-            case 'object':
-                if (kind.name)
-                    name = utils.names.phrase2Pascal(kind.name)
-                break
-        }
-
-        if (!name) {
-            throw new Error(`getKindKind: ${kind.kind} must have a name`)
-        }
-
-        return name!
-    }
 
     private registerKinds(schema: KindSchema, parent?: KindSchema) {
         if (!parent) this.ensureRegister(schema)
@@ -222,29 +69,27 @@ export class Generator {
             case 'enum':
             case 'int':
             case 'string':
-                console.log(`processKinds0: skipping ${this.getKindName(schema)}`)
+                console.log(`processKinds0: skipping ${schemaUtils.getKindName(schema)}`)
                 break
         }
     }
 
-    private validateKindReferences(schema: KindSchema, parent?: KindSchema) {
+    private validateKindReferences(kind: KindSchema, parent?: KindSchema) {
         const check = (schema: KindSchema) => {
-            const name = this.getKindName(schema)
-            if (!this.registry.has(name)) {
-                throw new Error(`reference kind ${name} not found`)
-            }
+            if (!this.isRegistered(schema))
+                throw new Error(`reference kind ${schemaUtils.getKindName(schema)} not found`)
         }
 
-        switch (schema.kind) {
+        switch (kind.kind) {
             case 'object':
-                check(schema)
-                schema.properties.forEach(property => this.validateKindReferences(property, schema))
+                check(kind)
+                kind.properties.forEach(property => this.validateKindReferences(property, kind))
                 break
             case 'array':
-                this.validateKindReferences(schema.items, parent)
+                this.validateKindReferences(kind.items, parent)
                 break
             case 'ref':
-                this.validateKindReferences(schema.ref, parent)
+                this.validateKindReferences(kind.ref, parent)
                 break
             case 'enum':
             case 'bool':
@@ -252,42 +97,6 @@ export class Generator {
             case 'string':
                 break
         }
-    }
-
-    private addImport = (sourceFile: SourceFile, decl: string | ImportDeclaration | KindSchema) => {
-        let found1: ImportDeclaration | undefined
-
-        if (typeof decl == 'string') {
-            found1 = this.importMap.get(decl)!
-        } else if ('kind' in decl) {
-            const typ = this.getKindKind(decl)
-            found1 = this.importMap.get(typ)
-        } else {
-            found1 = decl
-        }
-
-        if (!found1) return
-
-        let found2 = sourceFile.getImportDeclaration((d) => d.getModuleSpecifierValue() == found1.moduleSpecifier)
-        if (!found2) {
-            found2 = sourceFile.addImportDeclaration(found1)
-        }
-
-        found1.namedImports.forEach(namedDecl => {
-            let name = typeof namedDecl == 'string' ? namedDecl : namedDecl.name
-            if (!found2.getNamedImports().find(n => n.getName() == name)) {
-                found2.addNamedImport(namedDecl)
-            }
-        })
-    }
-
-    private registerImportDecl(decl: ImportDeclaration) {
-        decl.namedImports.forEach(namedDecl => {
-            const name = `${decl.moduleSpecifier}/${typeof namedDecl == 'string' ? namedDecl : namedDecl.name}`
-            if (!this.importMap.has(name)) {
-                this.importMap.set(name, decl)
-            }
-        })
     }
 
     private createGenPath(...parts: string[]): string {
@@ -295,178 +104,133 @@ export class Generator {
     }
 
     private processTopLevelKinds(schema: KindSchema) {
-        let filepath = this.convertName('file', schema)
-        filepath = npath.join(this.createGenPath(), filepath)
-        const sourceFile = this.tsProject.createSourceFile(filepath, "", { overwrite: true })
+        const filename = tsutils.name('file', schemaUtils.getKindName(schema))
+        const filepath = npath.join(this.createGenPath(), filename)
+        const file = this.tsProject.getFile(filename)
 
         switch (schema.kind) {
             case 'object':
-                this.processTypescriptClass(schema, sourceFile)
-                this.processZodSchema(schema, sourceFile)
+                this.processTypescriptClass(file, schema)
+                this.processZodSchema(file, schema)
                 // this.processDrizzleObject(schema, sourceFile)
                 break
         }
     }
 
-    private processJson(schema: KindSchema, sourceFile: SourceFile) {
+    private processZodSchema(file: TypeScriptFile, kind: KindSchema) {
+        const tsName = tsutils.name('ts-variable', kind.kind) + 'Zod'
+        const assignment = new TypeScriptAssignement({ name: tsName }, ['export', 'const'])
+        const fluid = new TypescriptFluidFunction('z')
 
+
+        const process = (current: KindSchema) => {
+            switch (kind.kind) {
+                case 'object':
+
+                    break
+                default:
+                    // @ts-ignore
+                    throw new Error(`processTypescriptClass: unknown kind ${kind.kind}`)
+            }
+        }
+
+        process(kind)
     }
 
-    // private processDrizzleObject(kind: KindSchema, sourceFile: SourceFile) {
-    //     switch (kind.kind) {
-    //         case 'object':
-    //             kind.properties.forEach(property => this.processDrizzleObject(property, sourceFile))
-    //             break
-    //         case 'bool':
-    //         case 'int':
-    //             this.addImport(sourceFile, 'drizzle-orm/sqlite-core/int')
-    //             this.addImport(sourceFile, 'drizzle-orm/sqlite-core/sqliteTable')
-    //             break
-    //         case 'string':
-    //         case 'enum':
-    //             this.addImport(sourceFile, 'drizzle-orm/sqlite-core/text')
-    //             this.addImport(sourceFile, 'drizzle-orm/sqlite-core/sqliteTable')
-    //     }
-    // }
-
-    private processTypescriptClass(kind: KindSchema, sourceFile: SourceFile, options: { classDecl?: ClassDeclaration } = {}) {
+    private processTypescriptClass(file: TypeScriptFile, kind: KindSchema) {
         switch (kind.kind) {
             case 'object':
-                this.addImport(sourceFile, 'uuid/v4')
-                this.addImport(sourceFile, 'uuid/NIL')
-                const newclassDecl = sourceFile.addClass({
-                    name: this.convertName('ts-class', kind),
-                    isExported: true
-                })
-                newclassDecl.addProperty({
-                    name: 'id',
-                    type: 'string',
-                    initializer: `NIL_UUID`
-                })
-                kind.properties.forEach(property => this.processTypescriptClass(
-                    property, sourceFile, { classDecl: newclassDecl })
+                const kindKind = schemaUtils.getKindKind(kind)
+                const tsType = tsutils.name('ts-class', kindKind)
+
+                file.getImport('uuid').addNamedImport(
+                    { name: 'v4', alias: 'uuid' },
+                    { name: 'NIL', alias: 'NIL_UUID' }
                 )
-                break
-            case 'string':
-                options?.classDecl?.addProperty({
-                    name: this.convertName('ts-property', kind),
-                    type: this.getKindKind(kind),
-                    initializer: kind.optional ? undefined : `'-'`
-                })
-                break
-            case 'bool':
-                options?.classDecl?.addProperty({
-                    name: this.convertName('ts-property', kind),
-                    type: this.getKindKind(kind),
-                    initializer: kind.optional ? undefined : `false`
-                })
-                break
-            case 'float':
-            case 'int':
-                options?.classDecl?.addProperty({
-                    name: this.convertName('ts-property', kind),
-                    type: this.getKindKind(kind),
-                    initializer: kind.optional ? undefined : `0`
-                })
-                break
-            case 'enum':
-                // name = this.createName(schema, utils.names.phrase2Pascal)
-                // typ = this.getType(schema)
-                break
-            case 'array':
-                options?.classDecl?.addProperty({
-                    name: this.convertName('ts-property', kind),
-                    type: this.getKindKind(kind),
-                    initializer: kind.optional ? undefined : '[]'
-                })
-                break
-            case 'ref':
-                this.addImport(sourceFile, kind.ref)
-                options?.classDecl?.addProperty({
-                    name: this.convertName('ts-property', kind),
-                    type: this.getKindKind(kind),
-                    initializer: kind.optional ? undefined : 'null'
-                })
+
+                const klass = file.getClass(tsType)
+                klass.exported = true
+                klass.addConstructor(new TypeScriptConstructor())
+                klass.getProperty("id").set().kind('string').default('NIL_UUID')
+
+                kind.properties.forEach(property => this.processTypescriptClassProperties(file, klass, property))
                 break
             default:
                 // @ts-ignore
-                throw new Error(`processTypescriptObject: unknown kind ${kind.kind}`)
+                throw new Error(`processTypescriptClass: unknown kind ${kind.kind}`)
         }
     }
 
+    private processTypescriptClassProperties(file: TypeScriptFile, klass: TypeScriptClass, kind: KindSchema) {
+        const kindName = schemaUtils.getKindName(kind)
+        const kindKind = schemaUtils.getKindKind(kind)
+        const tsName = tsutils.name('ts-property', kindName)
+        const prop: TypeScriptProperty = klass.getProperty(tsName)
+        const constructor0 = klass.constructors[0]
 
-    private processZodSchema(schema: KindSchema, sourceFile: SourceFile, options: { expressions?: string[], isArray?: boolean } = {}) {
-        let expression: string
-        switch (schema.kind) {
-            case 'object':
-                this.addImport(sourceFile, 'zod/z')
-                this.addImport(sourceFile, 'uuid/NIL')
+        const handleProp = (kind2: KindSchema) => {
+            switch (kind2.kind) {
+                case 'object':
+                    if (this.isRegistered(kind2)) {
+                        const tsType = tsutils.name('ts-class', kindKind)
+                        const propClass = this.tsProject.getClass(tsType)
+                        if (propClass) {
+                            prop.set().kind(propClass)
+                            const propFile = this.tsProject.findClassFile(propClass)
 
-                const expressons: string[] = [`id: z.string().default(NIL_UUID)`]
+                            if (propFile && propFile.name !== file.name) {
+                                file.getImport(propFile.name).addNamedImport(tsType)
+                            }
 
-                schema.properties.forEach(property => this.processZodSchema(property, sourceFile, { expressions: expressons }))
-
-                const statement = sourceFile.addVariableStatement({
-                    declarationKind: VariableDeclarationKind.Const,
-                    isExported: true,
-                    declarations: [{
-                        name: this.convertName('zod-schema', schema),
-                        initializer: writer => {
-                            writer.write("z.object({").indent()
-                            expressons.forEach(expression => { writer.writeLine(`${expression},`) })
-                            writer.write("})");
+                            if (kind.kind == 'ref' && !kind.optional) {
+                                constructor0.addInput({ name: tsName, type: tsType })
+                            }
                         }
-                    }]
-                })
-                break
-            case 'string':
-                expression = `${this.convertName('zod-property', schema,)} : z.string()`
-                if (schema.min) expression += `.min(${schema.min})`
-                if (schema.max) expression += `.max(${schema.max})`
-                if (schema.optional)
-                    expression += `.optional()`
-                else
-                    expression += `.default('-')`
-                options.expressions?.push(expression)
-                break
-            case 'float':
-                expression = `${this.convertName('zod-property', schema,)} : z.number()`
-                if (schema.min) expression += `.min(${schema.min})`
-                if (schema.max) expression += `.max(${schema.max})`
-                if (schema.optional)
-                    expression += `.optional()`
-                else
-                    expression += `.default(0)`
-                options.expressions?.push(expression)
-                break
-            case 'int':
-                expression = `${this.convertName('zod-property', schema,)} : z.number().int()`
-                if (schema.min) expression += `.min(${schema.min})`
-                if (schema.max) expression += `.max(${schema.max})`
-                if (schema.optional)
-                    expression += `.optional()`
-                else
-                    expression += `.default(0)`
-                options.expressions?.push(expression)
-                break
-            case 'bool':
-                expression = `${this.convertName('zod-property', schema,)} : z.boolean()`
-                if (schema.optional)
-                    expression += `.optional()`
-                else
-                    expression += `.default(false)`
-                options.expressions?.push(expression)
-                break
-            case 'enum':
-                break
-            case 'array':
-                break
-            case 'ref':
-                break
-            default:
-                // @ts-ignore
-                throw new Error(`processZodSchema: unknown kind ${schema.kind}`)
+                    } else {
+                        // TODO
+                    }
+                    break
+                case 'array':
+                    prop.array = true
+                    handleProp(kind2.items)
+                    break
+                case 'ref':
+                    handleProp(kind2.ref)
+                    break
+                case 'enum':
+                    // TODO
+                    prop.set().kind(tsutils.type(kind2))
+                    break
+                case 'string':
+                case 'bool':
+                case 'float':
+                case 'int':
+                    prop.set().kind(tsutils.type(kind2))
+
+                    if (!kind2.optional) {
+                        constructor0.addInput({ name: tsName, type: tsutils.type(kind2) })
+                        constructor0.body.push(`this.${tsName} = ${tsName}`)
+                    }
+                    break
+                default:
+                    // @ts-ignore
+                    throw new Error(`processTypescriptClassProperties: unknown kind ${kind2.kind}`)
+            }
         }
+
+        handleProp(kind)
+
+        if (schemaUtils.hasValidation(kind)) {
+            file.getImport('zod').addNamedImport('z')
+        }
+
+        if (!kind.optional) {
+            prop.set().optional(kind.optional).default(tsutils.defaultValue(kind))
+        } else {
+            prop.optional = kind.optional
+        }
+
+        return prop
     }
 
     processKinds(kinds?: KindSchema[]) {

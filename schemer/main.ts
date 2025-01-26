@@ -40,7 +40,7 @@ const labelGroup: KindSchema = {
     properties: [
         { kind: 'string', name: 'Name', max: 100 },
         { kind: 'string', name: 'Description', max: 500, optional: true, },
-        { kind: 'array', name: 'Label', items: { kind: 'ref', ref: label }, optional: true }
+        { kind: 'array', name: 'Labels', items: { kind: 'ref', ref: label }, optional: true }
     ]
 }
 
@@ -98,7 +98,7 @@ const personName: KindSchema = {
 
 const project: ProjectSchema = {
     kinds: [
-        testThing,
+        // testThing,
         label,
         labelGroup,
         // personName, 

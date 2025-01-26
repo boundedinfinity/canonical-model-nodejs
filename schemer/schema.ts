@@ -3,10 +3,118 @@
 // https://orm.drizzle.team/docs/relations
 // https://www.totaltypescript.com/concepts/the-prettify-helper
 
+import utils from './utils'
 
 // https://mvasilkov.animuchan.net/typescript-positive-integer-type
 type PositiveInteger<T extends number> = `${T}` extends '0' | `-${any}` | `${any}.${any}` ? never : T
 type Prettify<T> = { [K in keyof T]: T[K]; } & {};
+
+export const schemaUtils = {
+    hasValidation: (kind: KindSchema): boolean => {
+
+
+        switch (kind.kind) {
+            case 'object':
+                return utils.type.isDefined(kind.optional)
+            case 'string':
+                return utils.type.isDefined(kind.optional)
+                    || utils.type.isDefined(kind.min)
+                    || utils.type.isDefined(kind.max)
+                    || utils.type.isDefined(kind.pattern)
+                    || utils.type.isDefined(kind.includes)
+                    || utils.type.isDefined(kind.excludes)
+                    || utils.type.isDefined(kind.startsWith)
+                    || utils.type.isDefined(kind.endsWith)
+                    || utils.type.isDefined(kind.trimmed)
+            case 'bool':
+                break
+            case 'float':
+            case 'int':
+                return utils.type.isDefined(kind.optional)
+                    || utils.type.isDefined(kind.min)
+                    || utils.type.isDefined(kind.max)
+                    || utils.type.isDefined(kind.includes)
+                    || utils.type.isDefined(kind.excludes)
+                    || utils.type.isDefined(kind.multipleOf)
+                break
+            case 'enum':
+                return utils.type.isDefined(kind.optional)
+            case 'array':
+                return utils.type.isDefined(kind.optional)
+                    || utils.type.isDefined(kind.min)
+                    || utils.type.isDefined(kind.max)
+                    || utils.type.isDefined(kind.sorted)
+                    || utils.type.isDefined(kind.ordered)
+                    || schemaUtils.hasValidation(kind.items)
+            case 'ref':
+                return utils.type.isDefined(kind.optional)
+                    || schemaUtils.hasValidation(kind.ref)
+        }
+
+        return false
+    },
+    getKindName: (kind: KindSchema): string => {
+        let name: string | undefined
+
+        switch (kind.kind) {
+            case 'bool':
+            case 'enum':
+            case 'float':
+            case 'int':
+            case 'string':
+            case 'object':
+                name = kind.name
+                break
+            case 'array':
+                name = kind.name || schemaUtils.getKindName(kind.items)
+                break
+            case 'ref':
+                name = kind.name || schemaUtils.getKindName(kind.ref)
+                break
+        }
+
+        if (!name) {
+            throw new Error(`getKindName: ${kind.kind} must have a name`)
+        }
+
+        return name!
+    },
+    getKindKind: (kind: KindSchema): string => {
+        let name: string | undefined
+
+        switch (kind.kind) {
+            case 'bool':
+                name = 'boolean'
+                break
+            case 'float':
+            case 'int':
+                name = 'number'
+                break
+            case 'string':
+                name = 'string'
+                break
+            case 'ref':
+                name = schemaUtils.getKindKind(kind.ref)
+                break
+            case 'array':
+                name = schemaUtils.getKindKind(kind.items)
+                break
+            case 'enum':
+                // TODO
+                name = 'enum'
+                break
+            case 'object':
+                name = kind.name
+                break
+        }
+
+        if (!name) {
+            throw new Error(`getKindKind: ${kind.kind} must have a name`)
+        }
+
+        return name!
+    },
+}
 
 type sharedSchema = {
     name?: string
