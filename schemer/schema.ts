@@ -11,8 +11,6 @@ type Prettify<T> = { [K in keyof T]: T[K]; } & {};
 
 export const schemaUtils = {
     hasValidation: (kind: KindSchema): boolean => {
-
-
         switch (kind.kind) {
             case 'object':
                 return utils.type.isDefined(kind.optional)
@@ -138,7 +136,7 @@ export type StringSchema = {
     excludes?: string
     startsWith?: string
     endsWith?: string
-    trimmed?: string
+    trimmed?: boolean
     default?: string
 }
 

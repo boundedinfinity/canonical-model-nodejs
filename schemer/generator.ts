@@ -1,19 +1,21 @@
 // https://www.fullstory.com/blog/discriminated-unions-and-exhaustiveness-checking-in-typescript/
 
 import npath from 'node:path'
-import type { ProjectSchema, KindSchema } from './schema'
+import type { ProjectSchema, KindSchema, ObjectSchema } from './schema'
 import { schemaUtils } from './schema'
 import { stat } from 'node:fs'
 import {
     tsutils,
-    TypeScriptLanguageGenerator, TypeScriptFile, TypeScriptClass, TypeScriptProperty,
-    TypeScriptConstructor, TypeScriptAssignement, TypescriptFluidFunction
+    TsgLanguageGenerator, TsgFile, TsgClass, TsgProperty,
+    TsgConstructor, TsgAssignement, TsgFluidFunction,
+    TypeScriptFuntionCall, TsgObjectLiteral, TsgObjectLiteralProperty,
+    TsgLiteral, TsgBareword
 } from './ts-generator'
 import utils from './utils'
 
 export class Generator {
     private registry = new Map<string, KindSchema>
-    private tsProject = new TypeScriptLanguageGenerator({ formatOutput: true })
+    private tsProject = new TsgLanguageGenerator({ formatOutput: true })
     private project: ProjectSchema
     private rootDir = npath.join(import.meta.url, "..")
 
@@ -117,30 +119,98 @@ export class Generator {
         }
     }
 
-    private processZodSchema(file: TypeScriptFile, kind: KindSchema) {
-        const tsName = tsutils.name('ts-variable', kind.kind) + 'Zod'
-        const assignment = new TypeScriptAssignement({ name: tsName }, ['export', 'const'])
-        const fluid = new TypescriptFluidFunction('z')
+    private processZodSchema(file: TsgFile, kind: ObjectSchema) {
+        const common = () => {
+
+        }
+
+        const process = (current: KindSchema, currentName?: string) => {
+            if (!currentName)
+                currentName = tsutils.name('ts-variable', schemaUtils.getKindName(current))
+
+            switch (current.kind) {
+                case 'object':
+                    const propName = tsutils.name('zod-schema', schemaUtils.getKindName(current))
+                    const propFile = this.tsProject.findFile(propName)
+
+                    if (propFile) {
+                        if (propFile.name !== file.name) {
+                            file.getImport(propFile.name).addNamedImport(propName)
+                        }
+                        properties.push(
+                            new TsgObjectLiteralProperty(currentName, new TsgBareword(propName))
+                        )
+                    }
+                    break
+                case 'string':
+                    const sfluid = new TsgFluidFunction('z')
+                    sfluid.call('string')
+                    current.trimmed && sfluid.call('trim')
+                    current.min && sfluid.call('min').literal(current.min)
+                    current.max && sfluid.call('min').literal(current.max)
+                    current.startsWith && sfluid.call('startsWith').literal(current.startsWith)
+                    current.endsWith && sfluid.call('endsWith').literal(current.endsWith)
+                    current.pattern && sfluid.call('regex').bareword(`new RegExp('${current.pattern}')`)
+                    current.includes && sfluid.call('includes').literal(current.includes)
+                    // current.excludes && sfluid.call('excludes').literal(current.excludes)
+                    current.optional && sfluid.call('optional')
+
+                    properties.push(new TsgObjectLiteralProperty(currentName, sfluid))
+                    break
+                case 'array':
+                    process(current.items, currentName)
+                    break
+                case 'ref':
+                    process(current.ref, currentName)
+                    break
+                case 'int':
+                    const ifluid = new TsgFluidFunction('z')
+                    ifluid.call('number')
+                    ifluid.call('int')
+                    current.min && ifluid.call('min').literal(current.min)
+                    current.max && ifluid.call('min').literal(current.max)
+                    current.multipleOf && ifluid.call('multipleOf').literal(current.multipleOf)
+                    current.optional && ifluid.call('optional')
+                    properties.push(new TsgObjectLiteralProperty(currentName, ifluid))
+                    break
+                case 'float':
+                    const ffluid = new TsgFluidFunction('z')
+                    ffluid.call('number')
+                    ffluid.call('int')
+                    current.min && ffluid.call('min').literal(current.min)
+                    current.max && ffluid.call('min').literal(current.max)
+                    current.multipleOf && ffluid.call('multipleOf').literal(current.multipleOf)
+                    current.optional && ffluid.call('optional')
+                    properties.push(new TsgObjectLiteralProperty(currentName, ffluid))
+                    break
+                case 'bool':
+                    break
+                default:
+                    // @ts-ignore
+                    throw new Error(`processZodSchema: unknown kind ${current.kind}`)
+            }
+        }
+
+        const tsName = tsutils.name('zod-schema', schemaUtils.getKindName(kind))
+        const properties: TsgObjectLiteralProperty[] = []
+        kind.properties.forEach(property => process(property))
 
         if (schemaUtils.hasValidation(kind)) {
             file.getImport('zod').addNamedImport('z')
         }
 
-        const process = (current: KindSchema) => {
-            switch (kind.kind) {
-                case 'object':
+        const zod = new TsgAssignement(
+            { name: tsName, modifiers: { exported: true, const: true }, },
+            new TsgFluidFunction('z', [
+                new TypeScriptFuntionCall('object', [new TsgObjectLiteral(properties)])
+            ])
+        )
 
-                    break
-                default:
-                    // @ts-ignore
-                    throw new Error(`processTypescriptClass: unknown kind ${kind.kind}`)
-            }
-        }
+        file.addAssignment(zod)
 
-        process(kind)
     }
 
-    private processTypescriptClass(file: TypeScriptFile, kind: KindSchema) {
+    private processTypescriptClass(file: TsgFile, kind: KindSchema) {
         switch (kind.kind) {
             case 'object':
                 const kindKind = schemaUtils.getKindKind(kind)
@@ -153,7 +223,7 @@ export class Generator {
 
                 const klass = file.getClass(tsType)
                 klass.exported = true
-                klass.addConstructor(new TypeScriptConstructor())
+                klass.addConstructor(new TsgConstructor())
                 klass.getProperty("id").set().kind('string').default('NIL_UUID')
 
                 kind.properties.forEach(property => this.processTypescriptClassProperties(file, klass, property))
@@ -164,17 +234,17 @@ export class Generator {
         }
     }
 
-    private processTypescriptClassProperties(file: TypeScriptFile, klass: TypeScriptClass, kind: KindSchema) {
+    private processTypescriptClassProperties(file: TsgFile, klass: TsgClass, kind: KindSchema) {
         const kindName = schemaUtils.getKindName(kind)
         const kindKind = schemaUtils.getKindKind(kind)
         const tsName = tsutils.name('ts-property', kindName)
-        const prop: TypeScriptProperty = klass.getProperty(tsName)
+        const prop: TsgProperty = klass.getProperty(tsName)
         const constructor0 = klass.constructors[0]
 
-        const handleProp = (kind2: KindSchema) => {
-            switch (kind2.kind) {
+        const process = (current: KindSchema) => {
+            switch (current.kind) {
                 case 'object':
-                    if (this.isRegistered(kind2)) {
+                    if (this.isRegistered(current)) {
                         const tsType = tsutils.name('ts-class', kindKind)
                         const propClass = this.tsProject.getClass(tsType)
                         if (propClass) {
@@ -195,35 +265,38 @@ export class Generator {
                     break
                 case 'array':
                     prop.array = true
-                    handleProp(kind2.items)
+                    process(current.items)
                     break
                 case 'ref':
-                    handleProp(kind2.ref)
+                    process(current.ref)
                     break
                 case 'enum':
                     // TODO
-                    prop.set().kind(tsutils.type(kind2))
+                    prop.set().kind(tsutils.type(current))
                     break
                 case 'string':
                 case 'bool':
                 case 'float':
                 case 'int':
-                    prop.set().kind(tsutils.type(kind2))
+                    prop.set().kind(tsutils.type(current))
 
-                    if (!kind2.optional) {
-                        constructor0.addInput({ name: tsName, type: tsutils.type(kind2) })
-                        constructor0.body.push(`this.${tsName} = ${tsName}`)
+                    if (!kind.optional) {
+                        constructor0.addInput({
+                            name: tsName,
+                            type: tsutils.type(current),
+                            modifiers: { array: kind.kind == 'array' }
+                        })
+                        if (!kind.optional)
+                            constructor0.body.push(`this.${tsName} = ${tsName}`)
                     }
                     break
                 default:
                     // @ts-ignore
-                    throw new Error(`processTypescriptClassProperties: unknown kind ${kind2.kind}`)
+                    throw new Error(`processTypescriptClassProperties: unknown kind ${current.kind}`)
             }
         }
 
-        handleProp(kind)
-
-
+        process(kind)
 
         if (!kind.optional) {
             prop.set().optional(kind.optional).default(tsutils.defaultValue(kind))

@@ -3,6 +3,7 @@ import { writeFileSync } from 'node:fs'
 import type { KindSchema } from './schema'
 import utils from './utils'
 import prettier from "@prettier/sync";
+import type { getAsset } from 'node:sea';
 
 const config = {
     tabWidth: 4,
@@ -10,15 +11,15 @@ const config = {
     indexPrefix: (indent?: number) => ' '.repeat(config.tabWidth * (indent || 0))
 }
 
-export interface TypeScriptNamer {
-    name(): string
-}
-
-interface TypeScriptEmitter {
+interface TsgEmitter {
     emit(indent: number): string
 }
 
-class Emitter implements TypeScriptEmitter {
+interface TypeScriptNamer {
+    name: string | (() => string)
+}
+
+class Emitter implements TsgEmitter {
     emitted: string[] = []
     joiner: string
 
@@ -53,7 +54,38 @@ class Liner extends Emitter {
     newline() { this.lines.push(config.newline) }
 }
 
-function addNamedOrThrow<T extends { name: string }>(name: string, currents: T[], ...items: T[]) {
+function get<T extends TypeScriptNamer>(name: string, currents: T[]): T | undefined {
+    return currents.find(current => {
+        return typeof current.name == 'string'
+            ? current.name == name
+            : current.name() == name
+    })
+}
+
+function getNamerOrFail<T extends TypeScriptNamer>(title: string, name: string, currents: T[]): T {
+    let found = get<T>(name, currents)
+    if (!found) throw new Error(`${title} ${name} not found`)
+    return found
+}
+
+function has<T extends TypeScriptNamer>(name: string, currents: T[]): boolean {
+    return get<T>(name, currents) !== undefined
+}
+
+function load<T extends { name: string }>(name: string, type: { new(name: string): T; }, currents: T[]): T {
+    let found = currents.find(c => c.name == name)
+    if (!found) {
+        found = new type(name)
+        addOrThrow('name', currents, found)
+    }
+    return found
+}
+
+function addEmitter<T extends TsgEmitter>(name: string, currents: T[], ...items: T[]) {
+    currents.push(...items)
+}
+
+function addOrThrow<T extends { name: string }>(name: string, currents: T[], ...items: T[]) {
     items.forEach(item => {
         const found = currents.find(current => current.name == item.name)
         if (found)
@@ -62,30 +94,26 @@ function addNamedOrThrow<T extends { name: string }>(name: string, currents: T[]
     })
 }
 
-function hasNamed<T extends { name: string }>(currents: T[], name: string): boolean {
-    return currents.find(current => current.name == name) != undefined
-}
-
 // https://www.qualdesk.com/blog/2021/type-guard-for-string-union-types-typescript/
 // copilot:  "create a type guard for string union types in TypeScript for the following values ..."
-const TypeScriptBuiltInTypeList = ['string', 'number', 'boolean', 'object', 'any', 'void', 'null', 'undefined'] as const;
-export type TypeScriptBuiltInType = typeof TypeScriptBuiltInTypeList[number];
+const TsgBuiltInTypeList = ['string', 'number', 'boolean', 'object', 'any', 'void', 'null', 'undefined'] as const;
+export type TsgBuiltInType = typeof TsgBuiltInTypeList[number];
 
-const TypeScriptProperyModifierList = ['private', 'readonly', 'static'] as const;
-export type TypeScriptProperyModifier = typeof TypeScriptProperyModifierList[number];
+const TsgProperyModifierList = ['private', 'readonly', 'static'] as const;
+export type TsgProperyModifier = typeof TsgProperyModifierList[number];
 
-const TypeScriptVariableModifierList = ['export', 'default', 'const', 'let'] as const;
-export type TypeScriptVariableModifier = typeof TypeScriptVariableModifierList[number];
+const TsgVariableModifierList = ['export', 'default', 'const', 'let', 'variadic'] as const;
+export type TsgVariableModifier = typeof TsgVariableModifierList[number];
 
 export const tsutils = {
-    isBuiltInType: (value: string): value is TypeScriptBuiltInType => {
-        return TypeScriptBuiltInTypeList.includes(value as TypeScriptBuiltInType)
+    isBuiltInType: (value: string): value is TsgBuiltInType => {
+        return TsgBuiltInTypeList.includes(value as TsgBuiltInType)
     },
-    isProperyModifier: (value: string): value is TypeScriptProperyModifier => {
-        return TypeScriptProperyModifierList.includes(value as TypeScriptProperyModifier)
+    isProperyModifier: (value: string): value is TsgProperyModifier => {
+        return TsgProperyModifierList.includes(value as TsgProperyModifier)
     },
-    isVariableModifier: (value: string): value is TypeScriptVariableModifier => {
-        return TypeScriptVariableModifierList.includes(value as TypeScriptVariableModifier)
+    isVariableModifier: (value: string): value is TsgVariableModifier => {
+        return TsgVariableModifierList.includes(value as TsgVariableModifier)
     },
     defaultValue: (kind: KindSchema): string => {
         let value: string = 'undefined'
@@ -116,7 +144,7 @@ export const tsutils = {
 
         return value
     },
-    type: (kind: KindSchema): TypeScriptBuiltInType => {
+    type: (kind: KindSchema): TsgBuiltInType => {
         switch (kind.kind) {
             case 'object':
                 return 'object'
@@ -152,7 +180,7 @@ export const tsutils = {
                 name = utils.string.phrase2Camel(input)
                 break
             case 'zod-schema':
-                name = utils.string.phrase2Pascal(input) + 'Zod'
+                name = tsutils.name('ts-class', input) + 'Zod'
                 break
             case 'zod-property':
                 name = utils.string.phrase2Camel(input)
@@ -168,12 +196,12 @@ export const tsutils = {
     }
 }
 
-export type TypeScriptPropertyType = TypeScriptClass | TypeScriptBuiltInType
-export class TypeScriptProperty {
+export type TsgPropertyType = TsgClass | TsgBuiltInType
+export class TsgProperty {
     name: string
     optional?: boolean
-    modifiers: TypeScriptProperyModifier[] = []
-    kind?: TypeScriptPropertyType
+    modifiers: TsgProperyModifier[] = []
+    kind?: TsgPropertyType
     array?: boolean
     default?: string
 
@@ -182,19 +210,19 @@ export class TypeScriptProperty {
     }
 
     private static Builder = class {
-        constructor(private klass: TypeScriptProperty) { }
+        constructor(private klass: TsgProperty) { }
         optional(optional?: boolean) { this.klass.optional = optional; return this }
-        modifiers(...modifiers: TypeScriptProperyModifier[]) { this.klass.addModifier(...modifiers); return this }
-        kind(kind?: TypeScriptPropertyType) { this.klass.kind = kind; return this }
+        modifiers(...modifiers: TsgProperyModifier[]) { this.klass.addModifier(...modifiers); return this }
+        kind(kind?: TsgPropertyType) { this.klass.kind = kind; return this }
         array(array?: boolean) { this.klass.array = array; return this }
         default(d?: string) { this.klass.default = d; return this }
     }
 
     set() {
-        return new TypeScriptProperty.Builder(this)
+        return new TsgProperty.Builder(this)
     }
 
-    addModifier(...modifiers: TypeScriptProperyModifier[]) {
+    addModifier(...modifiers: TsgProperyModifier[]) {
         this.modifiers = [...new Set([...this.modifiers, ...modifiers])]
     }
 
@@ -207,7 +235,7 @@ export class TypeScriptProperty {
         let kind: string
 
         if (this.kind) {
-            if (this.kind instanceof TypeScriptClass) {
+            if (this.kind instanceof TsgClass) {
                 kind = this.kind.name
             } else {
                 kind = this.kind
@@ -232,23 +260,22 @@ export class TypeScriptProperty {
     }
 }
 
-export type TypeScriptVariable = {
+export type TsgFunctionInputArg = {
     name: string
     type?: string
-    isArray?: boolean
-    isVariadic?: boolean
+    modifiers?: VariableOptions
 }
 
-export type TypeScriptFunctionOutput = {
+export type TsgFunctionOutputArg = {
     type: string
     isArray?: boolean
     isVariadic?: boolean
 }
 
-export class TypeScriptFuntion {
+export class TsgFuntion implements TsgEmitter {
     name: string
-    inputs: TypeScriptVariable[] = []
-    output?: TypeScriptFunctionOutput
+    inputs: TsgFunctionInputArg[] = []
+    output?: TsgFunctionOutputArg
     body: string[] = []
     isMethod?: boolean
     exported?: boolean
@@ -259,54 +286,54 @@ export class TypeScriptFuntion {
 
     emit(indent: number = 0): string {
         const liner = new Liner(indent)
-        const worder = new Worder()
-
+        let line = ""
 
         if (!this.isMethod) {
-            if (this.exported) worder.push('export')
-            worder.push('function')
+            if (this.exported) line += ('export')
+            line += 'function'
         }
 
-        worder.push(this.name)
+        line += `${this.name} (`
 
         if (this.inputs.length > 0) {
-            worder.push('(')
+            line += config.newline
             const inputs: string[] = []
-            this.inputs.forEach((input) => {
-                let newInput = input.name + ':' + input.type
-                if (input.isArray) newInput += '[]'
-                inputs.push(newInput)
+            this.inputs.forEach((arg) => {
+                let input = arg.name
+                if (arg.modifiers?.optional) input += '?'
+                if (arg.type) input += `: ${arg.type}`
+                if (arg.modifiers?.array) input += '[]'
+                inputs.push(input)
             })
-            worder.push(inputs.join(', '))
-            worder.push(')')
-        } else {
-            worder.push('()')
+            line += inputs.join(`,${config.newline}`)
+            line += config.newline
         }
+        line += ')'
 
         if (this.output) {
-            worder.push(':')
+            line += ':'
             let output = this.output.type
             if (this.output.isArray) output += '[]'
-            worder.push(output)
+            line += output
         }
 
         if (this.body.length > 0) {
-            worder.push('{')
-            liner.push(worder.emit())
+            line += '{'
+            liner.push(line)
 
             const bodyLiner = new Liner(indent)
             this.body.forEach(line => bodyLiner.push(line))
             liner.push(bodyLiner.emit())
-            liner.push('}')
+            liner.push(`}`)
         } else {
-            worder.push('{}')
-            liner.push(worder.emit())
+            line += '{}'
+            liner.push(line)
         }
 
         return liner.emit()
     }
 
-    getInput(name: string): TypeScriptVariable {
+    getInput(name: string): TsgFunctionInputArg {
         let found = this.inputs.find(input => input.name == name)
         if (found)
             return found
@@ -318,124 +345,194 @@ export class TypeScriptFuntion {
         return this.inputs.find(input => input.name == name) != undefined
     }
 
-    addInput(...inputs: TypeScriptVariable[]) {
-        addNamedOrThrow('input', this.inputs, ...inputs)
+    addInput(...inputs: TsgFunctionInputArg[]) {
+        addOrThrow('input', this.inputs, ...inputs)
     }
 }
 
-export class TypeScriptConstructor extends TypeScriptFuntion {
+export class TsgConstructor extends TsgFuntion {
     constructor() {
         super('constructor')
         this.isMethod = true
     }
 }
 
-export type TypeScriptFuntionCallInput = {
+export class TypeScriptFuntionCall implements TsgEmitter {
     name: string
-    isArray?: boolean
-    isVariadic?: boolean
-}
+    args: TsgEmitter[] = []
 
-export class TypeScriptFuntionCall {
-    name: string
-    inputs: TypeScriptFuntionCallInput[] = []
-
-    constructor(name: string) {
+    constructor(name: string, args: TsgEmitter[] = []) {
         this.name = name
+        this.args.push(...args)
     }
 
-    addInput(...inputs: TypeScriptFuntionCallInput[]) {
-        addNamedOrThrow('input', this.inputs, ...inputs)
+    literal(value: string | number | boolean): TypeScriptFuntionCall {
+        this.args.push(new TsgLiteral(value))
+        return this
+    }
+
+    bareword(value: string): TypeScriptFuntionCall {
+        this.args.push(new TsgBareword(value))
+        return this
     }
 
     emit(indent: number = 0): string {
+        const args = this.args.map(arg => arg.emit(indent))
+        const line = `${this.name}(${args.join(', ')})`
+        return line
+    }
+}
+
+export class TsgFluidFunction implements TsgEmitter {
+    builder: string
+    calls: TsgEmitter[] = []
+    private currentCall?: TypeScriptFuntionCall
+
+    constructor(builder: string, calls: TsgEmitter[] = []) {
+        this.builder = builder
+        this.calls.push(...calls)
+    }
+
+    call(name: string): TypeScriptFuntionCall {
+        if (this.currentCall) this.calls.push(this.currentCall)
+        this.currentCall = new TypeScriptFuntionCall(name)
+        return this.currentCall
+    }
+
+    emit(indent: number = 0): string {
+        if (this.currentCall) this.calls.push(this.currentCall)
+        const calls = this.calls.map(emitter => emitter.emit(indent))
+        const line = `${this.builder}.${calls.join('.')}`
+        return line
+    }
+}
+
+export class TsgAssignement implements TsgEmitter {
+    variable: TsgFunctionInputArg
+    emitter: TsgEmitter
+
+    constructor(variable: TsgFunctionInputArg, assigned: TsgEmitter) {
+        this.variable = variable
+        this.emitter = assigned
+    }
+
+    name(): string { return this.variable.name }
+
+    emit(indent: number = 0): string {
         const worder = new Worder()
+        if (this.variable.modifiers?.exported) worder.push('export')
+        if (this.variable.modifiers?.const)
+            worder.push('const')
+        else
+            worder.push('let')
 
-        if (this.inputs.length > 0) {
-            this.inputs.forEach((input) => {
-                let word = ''
-                if (input.isVariadic) word += '...'
-                word += input.name
-                if (input.isArray || input.isVariadic) word += '[]'
-                worder.push(word)
-            })
-
-            worder.push(')')
-        } else {
-            worder.push(`${this.name}()`)
-        }
+        worder.push(this.variable.name, '=')
+        worder.push(this.emitter.emit(indent))
 
         return worder.emit()
     }
 }
 
-export class TypescriptFluidFunction {
-    builder: string
-    functions: TypeScriptFuntion[] = []
+export class TsgBareword implements TsgEmitter {
+    value: string
 
-    constructor(builder: string) {
-        this.builder = builder
+    constructor(value: string) {
+        this.value = value
+    }
+
+    emit(indent: number = 0): string {
+        return this.value
+    }
+}
+
+export class TsgLiteral implements TsgEmitter {
+    value: string | number | boolean
+
+    constructor(value: string | number | boolean) {
+        this.value = value
+    }
+
+    emit(indent: number = 0): string {
+        let word: string
+        if (typeof this.value == 'string') {
+            word = `'${this.value}'`
+        } else {
+            word = `${this.value}`
+        }
+
+        return word
+    }
+}
+
+
+export type VariableOptions = {
+    array?: boolean
+    optional?: boolean
+    isVariadic?: boolean
+    exported?: boolean
+    default?: boolean
+    const?: boolean
+}
+
+export class TsgObjectLiteralProperty implements TsgEmitter {
+    name: string
+    emitter: TsgEmitter
+    modifiers?: VariableOptions
+
+    constructor(name: string, emitter: TsgEmitter, modifiers?: VariableOptions) {
+        this.name = name
+        this.emitter = emitter
+        this.modifiers = modifiers
+    }
+
+    emit(indent: number = 0): string {
+        const worder = new Worder()
+        let name = this.name
+        if (this.modifiers?.optional) name += '?'
+        worder.push(config.indexPrefix(indent) + name)
+        worder.push(':')
+        worder.push(this.emitter.emit(indent))
+        return worder.emit()
+    }
+}
+
+export class TsgObjectLiteral implements TsgEmitter {
+    properties: TsgObjectLiteralProperty[] = []
+
+    constructor(properties: TsgObjectLiteralProperty[] = []) {
+        this.properties.push(...properties)
     }
 
     emit(indent: number = 0): string {
         const liner = new Liner(indent)
 
-        for (let i = 0; i < this.functions.length; i++) {
-            if (i == 0) {
-                liner.push(`${this.builder}.${this.functions[i].emit()}`)
-            } else {
-                liner.push(`${config.newline}${config.indexPrefix(indent + 1)}.${this.functions[i].emit()}`)
-            }
+        if (this.properties.length > 0) {
+            liner.push('{')
+            const lines = this.properties.map(property => property.emit(indent + 1)).join(',' + config.newline)
+            liner.push(lines)
+            liner.push('}')
         }
-
-        liner.push(';')
 
         return liner.emit()
     }
 }
 
-export class TypeScriptAssignement {
-    modidiers: TypeScriptVariableModifier[] = []
-    variable: TypeScriptVariable
-    assignements: TypeScriptEmitter[] = []
-
-    constructor(variable: TypeScriptVariable, modidiers: TypeScriptVariableModifier[] = []) {
-        this.variable = variable
-        this.modidiers.push(...modidiers)
-    }
-
-    emit(indent: number = 0): string {
-        const worder = new Worder()
-
-        if (this.modidiers.length > 0) {
-            worder.push(...this.modidiers)
-        } else {
-            worder.push('const')
-        }
-
-        worder.push(this.variable.name, '=')
-
-        this.assignements.forEach(assignement => worder.push(assignement.emit(indent)))
-
-        return worder.emit()
-    }
-}
-
-export class TypeScriptInterface {
+export class TsgInterface implements TsgEmitter {
     name: string
-    properties: TypeScriptProperty[] = []
+    object = new TsgObjectLiteral()
     exported?: boolean
 
-    constructor(name: string) {
+    constructor(name: string, properties: TsgObjectLiteralProperty[] = []) {
         this.name = name
+        this.object.properties.push(...properties)
     }
 
-    addProperty(...properties: TypeScriptProperty[]) {
+    addProperty(...properties: TsgObjectLiteralProperty[]) {
         properties.forEach(property => {
-            const found = this.properties.find(p => p.name == property.name)
+            const found = this.object.properties.find(p => p.name == property.name)
             if (found)
                 throw new Error(`property ${property.name} already exists`)
-            this.properties.push(property)
+            this.object.properties.push(property)
         })
     }
 
@@ -448,8 +545,7 @@ export class TypeScriptInterface {
         words.push(this.name)
         words.push('{')
         liner.push(words.join(' '))
-
-        this.properties.forEach(property => liner.push(property.emit(indent + 1)))
+        liner.push(this.object.emit(indent + 1))
         liner.push('}')
 
         return liner.emit()
@@ -457,23 +553,23 @@ export class TypeScriptInterface {
 }
 
 
-export type ThirdPartyModule = {
+export type TsgThirdPartyModule = {
     repositoryName: string
     fromName: string
     namedImports: { name: string, typeOnly?: boolean }[]
 }
 
-export type TypeScriptImport = { name: string, alias?: string, typeOnly?: boolean, default?: boolean }
+export type TsgImport = { name: string, alias?: string, typeOnly?: boolean, default?: boolean }
 
-export class TypeScriptImportDescriptor {
+export class TsgImportDescriptor implements TsgEmitter {
     name: string
-    namedImports: TypeScriptImport[] = []
+    namedImports: TsgImport[] = []
 
     constructor(identifier: string) {
         this.name = identifier
     }
 
-    private emitNamedImport(namedImport: TypeScriptImport): string {
+    private emitNamedImport(namedImport: TsgImport): string {
         let words: string[] = []
         words.push(namedImport.name)
         if (namedImport.alias) {
@@ -483,12 +579,12 @@ export class TypeScriptImportDescriptor {
         return words.join(' ')
     }
 
-    emit(): string {
+    emit(indent: number = 0): string {
         const normals = this.namedImports.filter(namedImport => !namedImport.typeOnly)
         const typeOnlys = this.namedImports.filter(namedImport => namedImport.typeOnly)
         const lines: string[] = []
 
-        const build = (imp: TypeScriptImport[], typeOnly?: boolean) => {
+        const build = (imp: TsgImport[], typeOnly?: boolean) => {
             let words: string[] = []
             words.push('import')
             if (typeOnly) words.push('type')
@@ -508,7 +604,7 @@ export class TypeScriptImportDescriptor {
         return lines.join(config.newline)
     }
 
-    addNamedImport(...namedImports: (string | TypeScriptImport)[]) {
+    addNamedImport(...namedImports: (string | TsgImport)[]) {
         namedImports.forEach(input => {
             const namedImport = typeof input == 'string' ? { name: input } : input
 
@@ -527,11 +623,11 @@ export class TypeScriptImportDescriptor {
     }
 }
 
-export class TypeScriptClass {
+export class TsgClass implements TsgEmitter {
     name: string
-    properties: TypeScriptProperty[] = []
-    constructors: TypeScriptConstructor[] = []
-    methods: TypeScriptFuntion[] = []
+    properties: TsgProperty[] = []
+    constructors: TsgConstructor[] = []
+    methods: TsgFuntion[] = []
     exported?: boolean
 
     constructor(name: string) {
@@ -565,7 +661,7 @@ export class TypeScriptClass {
         return lines.emit()
     }
 
-    addProperty(...properties: TypeScriptProperty[]) {
+    addProperty(...properties: TsgProperty[]) {
         properties.forEach(property => {
             const found = this.properties.find(p => p.name == property.name)
             if (found)
@@ -574,16 +670,16 @@ export class TypeScriptClass {
         })
     }
 
-    getProperty(name: string): TypeScriptProperty {
+    getProperty(name: string): TsgProperty {
         let found = this.properties.find(p => p.name == name)
         if (!found) {
-            found = new TypeScriptProperty(name)
+            found = new TsgProperty(name)
             this.properties.push(found)
         }
         return found
     }
 
-    private addFunction(name: string, current: TypeScriptFuntion[], ...functions: TypeScriptFuntion[]) {
+    private addFunction(name: string, current: TsgFuntion[], ...functions: TsgFuntion[]) {
         functions.forEach(fn => {
             const found = current.find(c => c.name == fn.name)
             if (found)
@@ -593,112 +689,120 @@ export class TypeScriptClass {
         })
     }
 
-    addConstructor(...constructors: TypeScriptFuntion[]) {
+    addConstructor(...constructors: TsgFuntion[]) {
         this.addFunction('constructors', this.constructors, ...constructors)
     }
 
-    addMethod(...methods: TypeScriptFuntion[]) {
+    addMethod(...methods: TsgFuntion[]) {
         this.addFunction('methods', this.methods, ...methods)
     }
 }
 
-export class TypeScriptFile {
+export class TsgFile implements TsgEmitter {
     name: string
-    imports: TypeScriptImportDescriptor[] = []
-    classes: TypeScriptClass[] = []
-    interfaces: TypeScriptInterface[] = []
-    functions: TypeScriptFuntion[] = []
+    imports: TsgImportDescriptor[] = []
+    classes: TsgClass[] = []
+    interfaces: TsgInterface[] = []
+    functions: TsgFuntion[] = []
+    assignments: TsgAssignement[] = []
 
     constructor(path: string) {
         this.name = path
     }
 
-    emit(): string {
+    emit(indent: number = 0): string {
         let liner = new Liner()
 
         if (this.imports.length > 0) {
-            this.imports.forEach(v => liner.push(v.emit()))
+            this.imports.forEach(v => liner.push(v.emit(indent)))
             liner.push(config.newline)
         }
 
         if (this.classes.length > 0) {
-            this.classes.forEach(v => liner.push(v.emit()))
+            this.classes.forEach(v => liner.push(v.emit(indent)))
             liner.push(config.newline)
         }
 
         if (this.interfaces.length > 0) {
-            this.interfaces.forEach(v => liner.push(v.emit()))
+            this.interfaces.forEach(v => liner.push(v.emit(indent)))
             liner.push(config.newline)
         }
 
         if (this.functions.length > 0) {
-            this.functions.forEach(v => liner.push(v.emit()))
+            this.functions.forEach(v => liner.push(v.emit(indent)))
+            liner.push(config.newline)
+        }
+
+        if (this.assignments.length > 0) {
+            this.assignments.forEach(v => liner.push(v.emit(indent)))
             liner.push(config.newline)
         }
 
         return liner.emit()
     }
 
-    private get<T extends { name: string }>(name: string, type: { new(name: string): T; }, currents: T[]): T {
-        let found = currents.find(c => c.name == name)
-        if (!found) {
-            found = new type(name)
-            addNamedOrThrow('name', currents, found)
-        }
-        return found
+
+
+    addAssignment(...assignments: TsgAssignement[]) {
+        addEmitter('assignement', this.assignments, ...assignments)
+    }
+    getAssignment(name: string): TsgAssignement {
+        return getNamerOrFail('assignement', name, this.assignments)
     }
 
-    hasClass(name: string): boolean { return hasNamed(this.classes, name) }
-    getClass(name: string): TypeScriptClass { return this.get(name, TypeScriptClass, this.classes) }
-    addClass(...classes: TypeScriptClass[]) { addNamedOrThrow('class', this.classes, ...classes) }
 
-    hasFunction(name: string): boolean { return hasNamed(this.functions, name) }
-    getFunction(name: string): TypeScriptFuntion { return this.get(name, TypeScriptFuntion, this.functions) }
-    addFunction(...functions: TypeScriptFuntion[]) { addNamedOrThrow('function', this.functions, ...functions) }
+    hasClass(name: string): boolean { return has(name, this.classes) }
+    getClass(name: string): TsgClass { return load(name, TsgClass, this.classes) }
+    addClass(...classes: TsgClass[]) { addOrThrow('class', this.classes, ...classes) }
+
+    hasFunction(name: string): boolean { return has(name, this.functions) }
+    getFunction(name: string): TsgFuntion { return load(name, TsgFuntion, this.functions) }
+    addFunction(...functions: TsgFuntion[]) { addOrThrow('function', this.functions, ...functions) }
 
 
-    hasInterface(name: string): boolean { return hasNamed(this.interfaces, name) }
-    getInterface(name: string): TypeScriptInterface { return this.get(name, TypeScriptInterface, this.interfaces) }
-    addInterface(...interfaces: TypeScriptInterface[]) { addNamedOrThrow('interface', this.interfaces, ...interfaces) }
+    hasInterface(name: string): boolean { return has(name, this.interfaces) }
+    getInterface(name: string): TsgInterface { return load(name, TsgInterface, this.interfaces) }
+    addInterface(...interfaces: TsgInterface[]) { addOrThrow('interface', this.interfaces, ...interfaces) }
 
-    hasImport(name: string): boolean { return hasNamed(this.imports, name) }
-    getImport(name: string): TypeScriptImportDescriptor {
-        return this.get(name, TypeScriptImportDescriptor, this.imports)
+    hasImport(name: string): boolean { return has(name, this.imports) }
+    getImport(name: string): TsgImportDescriptor {
+        return load(name, TsgImportDescriptor, this.imports)
     }
-    addImport(...imports: TypeScriptImportDescriptor[]) {
-        addNamedOrThrow('import', this.imports, ...imports)
+    addImport(...imports: TsgImportDescriptor[]) {
+        addOrThrow('import', this.imports, ...imports)
     }
 }
 
-export type TypeScriptLanguageGeneratorConfig = {
+export type TsgLanguageGeneratorConfig = {
     rootDir: string
     tsConfigPath: string
     formatOutput?: boolean
+    validateUnique?: boolean
 }
 
-const defaultConfig: TypeScriptLanguageGeneratorConfig = {
+const defaultConfig: TsgLanguageGeneratorConfig = {
     rootDir: './gen',
     tsConfigPath: './tsconfig.json',
 }
 
-export class TypeScriptLanguageGenerator {
-    config: TypeScriptLanguageGeneratorConfig
-    files: TypeScriptFile[] = []
+export class TsgLanguageGenerator {
+    config: TsgLanguageGeneratorConfig
+    files: TsgFile[] = []
 
-    constructor(config?: Partial<TypeScriptLanguageGeneratorConfig>) {
+    constructor(config?: Partial<TsgLanguageGeneratorConfig>) {
         this.config = { ...defaultConfig, ...config }
     }
 
-    getFile(name: string): TypeScriptFile {
+    getFile(name: string): TsgFile {
         let found = this.files.find(file => file.name == name)
         if (!found) {
-            found = new TypeScriptFile(name)
+            found = new TsgFile(name)
             this.files.push(found)
         }
         return found
     }
 
-    addFile(...files: TypeScriptFile[]) {
+    addFile(...files: TsgFile[]) {
         files.forEach(file => {
             const found = this.files.find(current => current.name == file.name)
             if (found)
@@ -707,8 +811,8 @@ export class TypeScriptLanguageGenerator {
         })
     }
 
-    getClass(name: string): TypeScriptClass | undefined {
-        let found: TypeScriptClass | undefined
+    getClass(name: string): TsgClass | undefined {
+        let found: TsgClass | undefined
 
         for (const file of this.files) {
             found = file.classes.find(c => c.name == name)
@@ -719,8 +823,23 @@ export class TypeScriptLanguageGenerator {
         return found
     }
 
-    findClassFile(nameOrClass: string | TypeScriptClass): TypeScriptFile | undefined {
+    findClassFile(nameOrClass: string | TsgClass): TsgFile | undefined {
         let name: string = typeof nameOrClass == 'string' ? nameOrClass : nameOrClass.name
+        let found = this.files.find(file => file.getClass(name) != undefined)
+        return found
+    }
+
+    findFile(name: string): TsgFile | undefined {
+        return this.files.find(file =>
+            has(name, file.assignments)
+            || has(name, file.classes)
+            || has(name, file.functions)
+            || has(name, file.interfaces)
+        )
+    }
+
+    findAssignementFile(nameOrClass: string | TsgAssignement): TsgFile | undefined {
+        let name: string = typeof nameOrClass == 'string' ? nameOrClass : nameOrClass.variable.name
         let found = this.files.find(file => file.getClass(name) != undefined)
         return found
     }
