@@ -114,7 +114,7 @@ export const schemaUtils = {
     },
 }
 
-type sharedSchema = {
+type SharedSchema = {
     name?: string
     description?: string
     version?: string
@@ -201,7 +201,7 @@ export type ObjectSchema = {
 }
 
 export type KindSchema =
-    (ObjectSchema | ArraySchema | StringSchema | IntSchema | FloatSchema | BoolSchema | RefSchema | EnumSchema) & sharedSchema
+    (ObjectSchema | ArraySchema | StringSchema | IntSchema | FloatSchema | BoolSchema | RefSchema | EnumSchema) & SharedSchema
 
 
 export type RelationshipSchema = {

@@ -13,6 +13,16 @@
             "cwd": "${workspaceFolder}/schemer",
             "stopOnEntry": false,
             "watchMode": false,
+        },
+        {
+            "name": "Debug current file",
+            "type": "bun",
+            "internalConsoleOptions": "neverOpen",
+            "request": "launch",
+            "program": "${file}",
+            "cwd": "${workspaceFolder}/schemer",
+            "stopOnEntry": false,
+            "watchMode": false,
         }
     ]
 }

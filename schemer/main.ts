@@ -101,9 +101,9 @@ const personName: KindSchema = {
 
 const project: ProjectSchema = {
     kinds: [
-        testThing,
-        // label,
-        // labelGroup,
+        // testThing,
+        label,
+        labelGroup,
         // personName, 
         // personNameHonorificType, 
         // personNameOrder, 

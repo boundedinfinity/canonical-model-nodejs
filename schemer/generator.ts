@@ -9,7 +9,7 @@ import {
     TsgLanguageGenerator, TsgFile, TsgClass, TsgProperty,
     TsgConstructor, TsgAssignement, TsgFluidFunction,
     TypeScriptFuntionCall, TsgObjectLiteral, TsgObjectLiteralProperty,
-    TsgLiteral, TsgBareword
+    TsgLiteral, TsgBareword, TsgFunctionInputArg
 } from './ts-generator'
 import utils from './utils'
 
@@ -28,6 +28,7 @@ export class Generator {
         const name = schemaUtils.getKindName(kind)
 
         if (!this.registry.has(name)) {
+            console.log(`registering ${name}`)
             this.registry.set(name, kind)
         }
     }
@@ -105,25 +106,19 @@ export class Generator {
         return npath.join(import.meta.dir, "gen", ...parts)
     }
 
-    private processTopLevelKinds(schema: KindSchema) {
-        const filename = tsutils.name('file', schemaUtils.getKindName(schema))
-        const filepath = npath.join(this.createGenPath(), filename)
+    private processTopLevelKinds(kind: KindSchema) {
+        const filename = tsutils.name('file', schemaUtils.getKindName(kind))
         const file = this.tsProject.getFile(filename)
 
-        switch (schema.kind) {
+        switch (kind.kind) {
             case 'object':
-                this.processTypescriptClass(file, schema)
-                this.processZodSchema(file, schema)
-                // this.processDrizzleObject(schema, sourceFile)
+                this.processTypescriptClass(file, kind)
+                this.processZodSchema(file, kind)
                 break
         }
     }
 
     private processZodSchema(file: TsgFile, kind: ObjectSchema) {
-        const common = () => {
-
-        }
-
         const process = (current: KindSchema, currentName?: string) => {
             if (!currentName)
                 currentName = tsutils.name('ts-variable', schemaUtils.getKindName(current))
@@ -191,7 +186,7 @@ export class Generator {
             }
         }
 
-        const tsName = tsutils.name('zod-schema', schemaUtils.getKindName(kind))
+        const zodName = tsutils.name('zod-schema', schemaUtils.getKindName(kind))
         const properties: TsgObjectLiteralProperty[] = []
         kind.properties.forEach(property => process(property))
 
@@ -200,63 +195,34 @@ export class Generator {
         }
 
         const zod = new TsgAssignement(
-            { name: tsName, modifiers: { exported: true, const: true }, },
+            { name: zodName, modifiers: { exported: true, const: true }, },
             new TsgFluidFunction('z', [
                 new TypeScriptFuntionCall('object', [new TsgObjectLiteral(properties)])
             ])
         )
 
         file.addAssignment(zod)
-
     }
 
-    private processTypescriptClass(file: TsgFile, kind: KindSchema) {
-        switch (kind.kind) {
-            case 'object':
-                const kindKind = schemaUtils.getKindKind(kind)
-                const tsType = tsutils.name('ts-class', kindKind)
+    private processTypescriptClass(file: TsgFile, classKind: ObjectSchema) {
+        const process = (propKind: KindSchema, prop?: TsgProperty) => {
+            if (!prop) {
+                const propName = tsutils.name('ts-property', schemaUtils.getKindName(propKind))
+                prop = tsClass.getProperty(propName)
+                prop.modifiers.optional = propKind.optional
+            }
 
-                file.getImport('uuid').addNamedImport(
-                    { name: 'v4', alias: 'uuid' },
-                    { name: 'NIL', alias: 'NIL_UUID' }
-                )
-
-                const klass = file.getClass(tsType)
-                klass.exported = true
-                klass.addConstructor(new TsgConstructor())
-                klass.getProperty("id").set().kind('string').default('NIL_UUID')
-
-                kind.properties.forEach(property => this.processTypescriptClassProperties(file, klass, property))
-                break
-            default:
-                // @ts-ignore
-                throw new Error(`processTypescriptClass: unknown kind ${kind.kind}`)
-        }
-    }
-
-    private processTypescriptClassProperties(file: TsgFile, klass: TsgClass, kind: KindSchema) {
-        const kindName = schemaUtils.getKindName(kind)
-        const kindKind = schemaUtils.getKindKind(kind)
-        const tsName = tsutils.name('ts-property', kindName)
-        const prop: TsgProperty = klass.getProperty(tsName)
-        const constructor0 = klass.constructors[0]
-
-        const process = (current: KindSchema) => {
-            switch (current.kind) {
+            switch (propKind.kind) {
                 case 'object':
-                    if (this.isRegistered(current)) {
-                        const tsType = tsutils.name('ts-class', kindKind)
-                        const propClass = this.tsProject.getClass(tsType)
-                        if (propClass) {
-                            prop.set().kind(propClass)
-                            const propFile = this.tsProject.findClassFile(propClass)
+                    if (this.isRegistered(propKind)) {
+                        const otherName = tsutils.name('ts-class', schemaUtils.getKindName(propKind))
+                        const otherClass = this.tsProject.getClass(otherName)
+                        if (otherClass) {
+                            prop.kind = otherClass
+                            const otherFile = this.tsProject.findClassFile(otherClass)
 
-                            if (propFile && propFile.name !== file.name) {
-                                file.getImport(propFile.name).addNamedImport(tsType)
-                            }
-
-                            if (kind.kind == 'ref' && !kind.optional) {
-                                constructor0.addInput({ name: tsName, type: tsType })
+                            if (otherFile && otherFile.name !== file.name) {
+                                file.getImport(otherFile.name).addNamedImport(otherClass)
                             }
                         }
                     } else {
@@ -264,52 +230,71 @@ export class Generator {
                     }
                     break
                 case 'array':
-                    prop.array = true
-                    process(current.items)
+                    prop.modifiers.array = true
+                    if (prop.isRequired())
+                        prop.modifiers.default = tsutils.defaultValue(propKind)
+                    process(propKind.items, prop)
                     break
                 case 'ref':
-                    process(current.ref)
+                    process(propKind.ref, prop)
                     break
                 case 'enum':
                     // TODO
-                    prop.set().kind(tsutils.type(current))
+                    prop.kind = tsutils.type(propKind)
                     break
                 case 'string':
                 case 'bool':
                 case 'float':
                 case 'int':
-                    prop.set().kind(tsutils.type(current))
+                    prop.kind = tsutils.type(propKind)
+                    if (prop.isRequired() && !prop.modifiers.default)
+                        prop.modifiers.default = tsutils.defaultValue(propKind)
 
-                    if (!kind.optional) {
-                        constructor0.addInput({
-                            name: tsName,
-                            type: tsutils.type(current),
-                            modifiers: { array: kind.kind == 'array' }
-                        })
-                        if (!kind.optional)
-                            constructor0.body.push(`this.${tsName} = ${tsName}`)
+                    if (prop.isRequired()) {
+                        tsConstructor.addInput(TsgFunctionInputArg.fromProperty(prop))
+                        tsConstructor.body.push(`this.${prop.name} = ${prop.name}`)
                     }
                     break
                 default:
                     // @ts-ignore
-                    throw new Error(`processTypescriptClassProperties: unknown kind ${current.kind}`)
+                    throw new Error(`processTypescriptClassProperties: unknown kind ${propKind.kind}`)
             }
         }
 
-        process(kind)
+        const classKindKind = schemaUtils.getKindKind(classKind)
+        const tsClassName = tsutils.name('ts-class', classKindKind)
 
-        if (!kind.optional) {
-            prop.set().optional(kind.optional).default(tsutils.defaultValue(kind))
-        } else {
-            prop.optional = kind.optional
-        }
+        file.getImport('uuid').addNamedImport(
+            { name: 'v4', alias: 'uuid' },
+            { name: 'NIL', alias: 'NIL_UUID' }
+        )
 
-        return prop
+        const tsConstructor = new TsgConstructor()
+        const tsClass = file.getClass(tsClassName)
+        tsClass.exported = true
+        tsClass.addConstructor(tsConstructor)
+        const id = tsClass.getProperty("id")
+        id.kind = 'string'
+        id.modifiers.default = 'NIL_UUID'
+
+        classKind.properties.forEach(property => process(property))
     }
+
+
 
     processKinds(kinds?: KindSchema[]) {
         kinds?.forEach(schema => this.registerKinds(schema))
         this.registry.values().forEach(kind => this.validateKindReferences(kind))
+
+        this.registry.values().forEach(kind => {
+            const classKindKind = schemaUtils.getKindKind(kind)
+            const filename = tsutils.name('file', classKindKind)
+            const tsClassName = tsutils.name('ts-class', classKindKind)
+            const file = this.tsProject.getFile(filename)
+            const klass = file.getClass(tsClassName)
+            console.log(`class: ${klass.name}`)
+        })
+
         this.registry.values().forEach(kind => this.processTopLevelKinds(kind))
     }
 

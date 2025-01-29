@@ -199,37 +199,24 @@ export const tsutils = {
 export type TsgPropertyType = TsgClass | TsgBuiltInType
 export class TsgProperty {
     name: string
-    optional?: boolean
-    modifiers: TsgProperyModifier[] = []
     kind?: TsgPropertyType
-    array?: boolean
-    default?: string
+    modifiers: VariableOptions = {}
 
     constructor(name: string) {
         this.name = name
     }
 
-    private static Builder = class {
-        constructor(private klass: TsgProperty) { }
-        optional(optional?: boolean) { this.klass.optional = optional; return this }
-        modifiers(...modifiers: TsgProperyModifier[]) { this.klass.addModifier(...modifiers); return this }
-        kind(kind?: TsgPropertyType) { this.klass.kind = kind; return this }
-        array(array?: boolean) { this.klass.array = array; return this }
-        default(d?: string) { this.klass.default = d; return this }
-    }
+    isRequired(): boolean { return !this.modifiers.optional }
 
-    set() {
-        return new TsgProperty.Builder(this)
-    }
-
-    addModifier(...modifiers: TsgProperyModifier[]) {
-        this.modifiers = [...new Set([...this.modifiers, ...modifiers])]
+    modify(...modifiers: VariableOptions[]) {
+        this.modifiers = { ...this.modifiers, ...modifiers }
     }
 
     emit(indent: number = 0): string {
         const worder = new Worder()
-        this.modifiers.sort((a, b) => a.localeCompare(b)).forEach(m => { worder.push(m) })
-        this.optional ? worder.push(this.name + '?') : worder.push(this.name)
+
+        if (this.modifiers?.private) worder.push('private')
+        this.modifiers?.optional ? worder.push(this.name + '?') : worder.push(this.name)
         worder.push(':')
 
         let kind: string
@@ -244,12 +231,12 @@ export class TsgProperty {
             kind = 'any'
         }
 
-        if (this.array) kind += '[]'
+        if (this.modifiers?.array) kind += '[]'
         worder.push(kind)
 
-        if (this.default) {
+        if (this.modifiers?.default) {
             worder.push('=')
-            worder.push(this.default)
+            worder.push(this.modifiers.default)
         }
 
         worder.push(';')
@@ -260,10 +247,29 @@ export class TsgProperty {
     }
 }
 
-export type TsgFunctionInputArg = {
+export class TsgFunctionInputArg {
     name: string
     type?: string
     modifiers?: VariableOptions
+
+    constructor(name: string, modifiers?: VariableOptions) {
+        this.name = name
+        this.modifiers = modifiers
+    }
+
+    static fromProperty(property: TsgProperty): TsgFunctionInputArg {
+        const arg = new TsgFunctionInputArg(property.name, property.modifiers)
+
+        if (property.kind) {
+            if (property.kind instanceof TsgClass) {
+                arg.type = property.kind.name
+            } else {
+                arg.type = property.kind
+            }
+        }
+
+        return arg
+    }
 }
 
 export type TsgFunctionOutputArg = {
@@ -470,8 +476,9 @@ export type VariableOptions = {
     optional?: boolean
     isVariadic?: boolean
     exported?: boolean
-    default?: boolean
+    default?: string
     const?: boolean
+    private?: boolean
 }
 
 export class TsgObjectLiteralProperty implements TsgEmitter {
