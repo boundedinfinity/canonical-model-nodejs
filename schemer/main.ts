@@ -8,23 +8,23 @@ const testThing: KindSchema = {
     kind: 'object',
     name: 'Test Thing',
     properties: [
-        { kind: 'string', name: 'Test String Required', ...stringArgs },
-        { kind: 'string', name: 'Test String Optional', ...stringArgs, optional: true },
-        { kind: 'int', name: 'Test Int Required', ...numberArgs },
-        { kind: 'int', name: 'Test Int Optional', ...numberArgs, optional: true, },
-        { kind: 'float', name: 'Test Float Required', ...numberArgs },
-        { kind: 'float', name: 'Test Float Optional', ...numberArgs, optional: true, },
-        { kind: 'bool', name: 'Test Boolean Required', },
-        { kind: 'bool', name: 'Test Boolean Optional', optional: true },
+        // { kind: 'string', name: 'Test String Required', ...stringArgs },
+        // { kind: 'string', name: 'Test String Optional', ...stringArgs, optional: true },
+        // { kind: 'int', name: 'Test Int Required', ...numberArgs },
+        // { kind: 'int', name: 'Test Int Optional', ...numberArgs, optional: true, },
+        // { kind: 'float', name: 'Test Float Required', ...numberArgs },
+        // { kind: 'float', name: 'Test Float Optional', ...numberArgs, optional: true, },
+        // { kind: 'bool', name: 'Test Boolean Required', },
+        // { kind: 'bool', name: 'Test Boolean Optional', optional: true },
 
-        { kind: 'array', name: 'Test String Array Required', items: { kind: 'string', ...stringArgs } },
+        // { kind: 'array', name: 'Test String Array Required', items: { kind: 'string', ...stringArgs } },
         { kind: 'array', name: 'Test String Array Optional', items: { kind: 'string', ...stringArgs }, optional: true },
-        { kind: 'array', name: 'Test Int Array Required', items: { kind: 'int', ...numberArgs } },
-        { kind: 'array', name: 'Test Int Array Optional', items: { kind: 'int', ...numberArgs }, optional: true },
-        { kind: 'array', name: 'Test Float Array Required', items: { kind: 'float', ...numberArgs } },
-        { kind: 'array', name: 'Test Float Array Optional', items: { kind: 'float', ...numberArgs }, optional: true },
-        { kind: 'array', name: 'Test Boolean Array Required', items: { kind: 'bool' } },
-        { kind: 'array', name: 'Test Boolean Array Optional', items: { kind: 'bool' }, optional: true },
+        // { kind: 'array', name: 'Test Int Array Required', items: { kind: 'int', ...numberArgs } },
+        // { kind: 'array', name: 'Test Int Array Optional', items: { kind: 'int', ...numberArgs }, optional: true },
+        // { kind: 'array', name: 'Test Float Array Required', items: { kind: 'float', ...numberArgs } },
+        // { kind: 'array', name: 'Test Float Array Optional', items: { kind: 'float', ...numberArgs }, optional: true },
+        // { kind: 'array', name: 'Test Boolean Array Required', items: { kind: 'bool' } },
+        // { kind: 'array', name: 'Test Boolean Array Optional', items: { kind: 'bool' }, optional: true },
     ]
 }
 
@@ -101,9 +101,9 @@ const personName: KindSchema = {
 
 const project: ProjectSchema = {
     kinds: [
-        // testThing,
-        label,
-        labelGroup,
+        testThing,
+        // label,
+        // labelGroup,
         // personName, 
         // personNameHonorificType, 
         // personNameOrder, 

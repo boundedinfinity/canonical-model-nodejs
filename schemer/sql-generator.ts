@@ -1,4 +1,4 @@
-import type { foreignKey } from "drizzle-orm/mysql-core"
+import { foreignKey } from "drizzle-orm/mysql-core"
 
 const config = {
     newline: '\n',
@@ -125,14 +125,14 @@ export class SqlDatabase {
 
     oneToOne(t0: SqlTable, t1: SqlTable, options?: SqlForeignKeyOptions) {
         const fk0 = t0.getPrimaryKeyOrThrow()
-        const name = `${t0.name}_id`
+        const name = sqlUtil.foreignKeyName(fk0)
         const ref = t1.column(name, 'TEXT', { unique: true })
         ref.foreignKey(fk0, options)
     }
 
     oneToMany(t0: SqlTable, t1: SqlTable, options?: SqlForeignKeyOptions) {
         const fk0 = t0.getPrimaryKeyOrThrow()
-        const name = `${t0.name}_id`
+        const name = sqlUtil.foreignKeyName(fk0)
         const ref = t1.column(name, 'TEXT')
         ref.foreignKey(fk0, options)
     }
@@ -144,10 +144,10 @@ export class SqlDatabase {
     manyToMany(t0: SqlTable, t1: SqlTable): SqlTable {
         const fk0 = t0.getPrimaryKeyOrThrow()
         const fk1 = t1.getPrimaryKeyOrThrow()
-        const name = `${fk0.table.name}__${fk1.table.name}`
-        const table = new SqlTable(fk0.table.database, name)
-        const pk0 = table.column(fk0.table.name + '_id', 'TEXT', { primary: true })
-        const pk1 = table.column(fk1.table.name + '_id', 'TEXT', { primary: true })
+
+        const table = this.table(sqlUtil.joinTableName(fk0, fk1))
+        const pk0 = table.column(fk0.foreignKeyName(), fk0.type, { primary: true })
+        const pk1 = table.column(fk1.foreignKeyName(), fk1.type, { primary: true })
 
         pk0.foreignKey(fk0)
         pk1.foreignKey(fk1)
@@ -220,10 +220,24 @@ export class CreateSqlTable {
         words.push(config.wrapName(this.table.name))
         words.push('(')
 
-        const middle: string[] = []
-        middle.push(...this.table.columns.map(c => c.emit()))
-        middle.push(...this.table.foreignKeys.map(fk => fk.emit()))
-        words.push(middle.join(', '))
+        const columns: string[] = []
+        columns.push(...this.table.columns.map(c => c.emit()))
+        words.push(columns.join(', '))
+
+        const checks = this.table.columns
+            .filter(col => col.options.checks !== undefined)
+            .flatMap(col => col.options.checks?.map(chk => chk.emit(col)))
+            .filter(chk => chk !== undefined)
+
+        if (checks.length > 0) {
+            words.push('CHECK (')
+            words.push(checks.join(' AND '))
+            words.push(')')
+        }
+
+        const foreignKeys: string[] = []
+        foreignKeys.push(...this.table.foreignKeys.map(fk => fk.emit()))
+        words.push(foreignKeys.join(', '))
 
         words.push(')')
 
@@ -281,14 +295,6 @@ export class SqlForeignKey {
 
         return words.join(' ')
     }
-}
-
-// ////////////////////////////////////////////////////////////////////////////
-// SQL Join Table
-// ////////////////////////////////////////////////////////////////////////////
-
-export type SqlJoinTableOptions = {
-    name?: string
 }
 
 // ////////////////////////////////////////////////////////////////////////////
@@ -410,7 +416,7 @@ export type SqlColumnOptions = {
     checks?: { emit: (column: SqlColumn) => string }[]
 }
 
-export class SqlColumnStringMax {
+export class SqlColumnTextMax {
     max: number
     constructor(max: number) {
         this.max = max
@@ -420,13 +426,33 @@ export class SqlColumnStringMax {
     }
 }
 
-export class SqlColumnStringMin {
+export class SqlColumnTextMin {
     min: number
     constructor(max: number) {
         this.min = max
     }
     emit(column: SqlColumn): string {
         return `LENGTH(${column.escapedName()}) >= ${this.min}`
+    }
+}
+
+export class SqlColumnNumberMax {
+    max: number
+    constructor(max: number) {
+        this.max = max
+    }
+    emit(column: SqlColumn): string {
+        return `${column.escapedName()} <= ${this.max}`
+    }
+}
+
+export class SqlColumnNumberMin {
+    min: number
+    constructor(max: number) {
+        this.min = max
+    }
+    emit(column: SqlColumn): string {
+        return `${column.escapedName()} >= ${this.min}`
     }
 }
 
@@ -447,6 +473,10 @@ export class SqlColumn {
             const index = new SqlIndex(this)
             this.table.database.indexes.push(index)
         }
+    }
+
+    foreignKeyName(): string {
+        return sqlUtil.foreignKeyName(this)
     }
 
     qualifiedName(): string {
@@ -476,10 +506,6 @@ export class SqlColumn {
         const words: string[] = []
         words.push(config.wrapName(this.name))
         words.push(this.type)
-
-        if (this.options.checks) {
-            words.push(`CHECK (${this.options.checks.map(c => c.emit(this)).join(' AND ')})`)
-        }
 
         if (this.options.primary) {
             words.push('PRIMARY KEY')
@@ -593,6 +619,14 @@ export const sqlUtil = {
     isForeignKeyClauseOnType: (value: string): value is SqlForeignKeyClauseOnType => {
         return SqlForeignKeyClauseOnList.includes(value as SqlForeignKeyClauseOnType)
     },
+    foreignKeyName: (column: SqlColumn): string => {
+        const name = `${column.table.name}_${column.name}`
+        return name
+    },
+    joinTableName: (c1: SqlColumn, c2: SqlColumn): string => {
+        const name = `${c1.table.name}__${c2.table.name}`
+        return name
+    }
 }
 
 // ////////////////////////////////////////////////////////////////////////////

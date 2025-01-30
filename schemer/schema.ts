@@ -72,7 +72,7 @@ export const schemaUtils = {
         }
 
         if (!name) {
-            throw new Error(`getKindName: ${kind.kind} must have a name`)
+            throw new Error(`getKindName: ${kind.kind} must have a name: ${JSON.stringify(kind)}`)
         }
 
         return name!
@@ -107,7 +107,7 @@ export const schemaUtils = {
         }
 
         if (!name) {
-            throw new Error(`getKindKind: ${kind.kind} must have a name`)
+            throw new Error(`getKindKind: ${kind.kind} must have a name: ${JSON.stringify(kind)}`)
         }
 
         return name!
