@@ -3,6 +3,8 @@
 import npath from 'node:path'
 import type { ProjectSchema, KindSchema, ObjectSchema } from './schema'
 import { schemaUtils } from './schema'
+import { KindRegistry } from './kind-registry'
+import { KindToSqlTranslator } from './kind-to-sql-translator'
 import { stat } from 'node:fs'
 import {
     tsutils,
@@ -11,95 +13,15 @@ import {
     TypeScriptFuntionCall, TsgObjectLiteral, TsgObjectLiteralProperty,
     TsgLiteral, TsgBareword, TsgFunctionInputArg
 } from './ts-generator'
-import utils from './utils'
 
 export class Generator {
-    private registry = new Map<string, KindSchema>
+    private registry = new KindRegistry()
     private tsProject = new TsgLanguageGenerator({ formatOutput: true })
     private project: ProjectSchema
     private rootDir = npath.join(import.meta.url, "..")
 
     constructor(project: ProjectSchema) {
         this.project = project
-    }
-
-    private ensureRegister(kind: KindSchema) {
-        const typ = schemaUtils.getKindKind(kind)
-        const name = schemaUtils.getKindName(kind)
-
-        if (!this.registry.has(name)) {
-            console.log(`registering ${name}`)
-            this.registry.set(name, kind)
-        }
-    }
-
-    private isRegistered(nameOrKind: string | KindSchema): boolean {
-        let name: string
-        if (typeof nameOrKind === 'string')
-            name = nameOrKind
-        else
-            name = schemaUtils.getKindName(nameOrKind)
-
-        return this.registry.has(name)
-    }
-
-
-    private registerKinds(schema: KindSchema, parent?: KindSchema) {
-        if (!parent) this.ensureRegister(schema)
-
-        switch (schema.kind) {
-            case 'object':
-                schema.properties.forEach(property => {
-                    switch (property.kind) {
-                        case 'array':
-                        case 'ref':
-                            this.registerKinds(property, schema)
-                            break
-                    }
-                })
-                break
-            case 'array':
-                switch (schema.items.kind) {
-                    case 'ref':
-                        this.registerKinds(schema.items, parent)
-                        break;
-                }
-                break
-            case 'ref':
-                this.registerKinds(schema.ref)
-                break
-            case 'bool':
-            case 'enum':
-            case 'int':
-            case 'string':
-                console.log(`processKinds0: skipping ${schemaUtils.getKindName(schema)}`)
-                break
-        }
-    }
-
-    private validateKindReferences(kind: KindSchema, parent?: KindSchema) {
-        const check = (schema: KindSchema) => {
-            if (!this.isRegistered(schema))
-                throw new Error(`reference kind ${schemaUtils.getKindName(schema)} not found`)
-        }
-
-        switch (kind.kind) {
-            case 'object':
-                check(kind)
-                kind.properties.forEach(property => this.validateKindReferences(property, kind))
-                break
-            case 'array':
-                this.validateKindReferences(kind.items, parent)
-                break
-            case 'ref':
-                this.validateKindReferences(kind.ref, parent)
-                break
-            case 'enum':
-            case 'bool':
-            case 'int':
-            case 'string':
-                break
-        }
     }
 
     private createGenPath(...parts: string[]): string {
@@ -214,7 +136,7 @@ export class Generator {
 
             switch (propKind.kind) {
                 case 'object':
-                    if (this.isRegistered(propKind)) {
+                    if (this.registry.isRegistered(propKind)) {
                         const otherName = tsutils.name('ts-class', schemaUtils.getKindName(propKind))
                         const otherClass = this.tsProject.getClass(otherName)
                         if (otherClass) {
@@ -280,13 +202,11 @@ export class Generator {
         classKind.properties.forEach(property => process(property))
     }
 
-
-
     processKinds(kinds?: KindSchema[]) {
-        kinds?.forEach(schema => this.registerKinds(schema))
-        this.registry.values().forEach(kind => this.validateKindReferences(kind))
+        kinds?.forEach(schema => this.registry.register(schema))
+        this.registry.validate()
 
-        this.registry.values().forEach(kind => {
+        this.registry.registry.values().forEach(kind => {
             const classKindKind = schemaUtils.getKindKind(kind)
             const filename = tsutils.name('file', classKindKind)
             const tsClassName = tsutils.name('ts-class', classKindKind)
@@ -295,7 +215,12 @@ export class Generator {
             console.log(`class: ${klass.name}`)
         })
 
-        this.registry.values().forEach(kind => this.processTopLevelKinds(kind))
+        this.registry.registry.values().forEach(kind => this.processTopLevelKinds(kind))
+
+        const sqlTranslator = new KindToSqlTranslator(this.registry)
+        const sql = sqlTranslator.process().emit()
+        console.log(sql)
+        console.log()
     }
 
     processProject() {

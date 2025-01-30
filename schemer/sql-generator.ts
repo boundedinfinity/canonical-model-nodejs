@@ -2,7 +2,26 @@ import type { foreignKey } from "drizzle-orm/mysql-core"
 
 const config = {
     newline: '\n',
+    indent(text: string, options?: IndentOptions): string {
+        let out = text
+
+        if (options?.level && options?.char) {
+            const level = options.level
+            const char = options.char
+            let lines = out.split('\n')
+            lines = lines.map(line => `${char.repeat(level)}${line}`)
+            out = lines.join('\n')
+        }
+
+        return out
+    },
+
     wrapName: (name: string) => '`' + name + '`',
+}
+
+type IndentOptions = {
+    level?: number
+    char?: string
 }
 
 // ////////////////////////////////////////////////////////////////////////////
@@ -10,11 +29,12 @@ const config = {
 // ////////////////////////////////////////////////////////////////////////////
 
 export type SqlGeneratorOptions = {
+    indent?: IndentOptions
 }
 
 export class SqlGenerator {
-    options: SqlGeneratorOptions = {}
     databases: SqlDatabase[] = []
+    options: SqlGeneratorOptions = { indent: { char: ' ', level: 0 } }
 
     constructor(options?: SqlGeneratorOptions) {
         this.options = { ...this.options, ...options }
@@ -25,6 +45,12 @@ export class SqlGenerator {
         this.databases.push(database)
         return database
     }
+
+    emit(): string {
+        const lines: string[] = []
+        lines.push(...this.databases.map(d => d.emit()))
+        return lines.join(config.newline)
+    }
 }
 
 // ////////////////////////////////////////////////////////////////////////////
@@ -33,6 +59,7 @@ export class SqlGenerator {
 
 export type SqlDatabaseOptions = {
     pragmas?: SqlPragma[]
+    indent?: IndentOptions
 }
 
 export class SqlDatabase {
@@ -54,6 +81,17 @@ export class SqlDatabase {
         return table
     }
 
+    getTable(name: string): SqlTable | undefined {
+        return this.tables.find(t => t.name === name)
+    }
+
+    getTableOrThrow(name: string): SqlTable {
+        const found = this.getTable(name)
+        if (!found)
+            throw new Error(`database ${this.name} has no table ${name}`)
+        return found
+    }
+
     addPragma(name: SqlPragma) {
         if (!this.options.pragmas) this.options.pragmas = []
         this.options.pragmas.push(name)
@@ -67,7 +105,6 @@ export class SqlDatabase {
 
     emit(): string {
         const lines: string[] = []
-
 
         if (this.options.pragmas?.length)
             lines.push(this.emitPragma())
@@ -276,6 +313,10 @@ export class SqlTable {
         this.options = { ...this.options, ...options }
     }
 
+    escapedName(): string {
+        return config.wrapName(this.name)
+    }
+
     create(options?: CreateSqlTableOptions): CreateSqlTable {
         return new CreateSqlTable(this, { ...this.options.create, ...options })
     }
@@ -288,7 +329,9 @@ export class SqlTable {
         if (options?.array) {
             const tablename = this.name + '__' + name
             const table = this.database.table(tablename)
-            const column = table.column('name', type, options)
+            table.column('index', 'INTEGER', { unique: true, ordered: 'ASC' })
+            const options2 = { ...options, array: false }
+            const column = table.column('name', type, options2)
             this.database.oneToMany(this, table)
             return column
         } else {
@@ -318,6 +361,17 @@ export class SqlTable {
             throw new Error(`table ${this.name} has no primary key`)
         return found
     }
+
+    getColumn(name: string): SqlColumn | undefined {
+        return this.columns.find(c => c.name === name)
+    }
+
+    getColumnOrThrow(name: string): SqlColumn {
+        const found = this.getColumn(name)
+        if (!found)
+            throw new Error(`table ${this.name} has no column ${name}`)
+        return found
+    }
 }
 
 // ////////////////////////////////////////////////////////////////////////////
@@ -326,6 +380,8 @@ export class SqlTable {
 
 // https://www.qualdesk.com/blog/2021/type-guard-for-string-union-types-typescript/
 // copilot:  "create a type guard for string union types in TypeScript for the following values ..."
+
+// https://www.sqlite.org/datatype3.html
 const SqlColumnTypeList = ['TEXT', 'NUMERIC', 'INTEGER', 'REAL', 'BLOB'] as const;
 export type SqlColumnType = typeof SqlColumnTypeList[number];
 
@@ -335,21 +391,43 @@ export type SqlColumnOnConflictType = typeof SqlColumnOnConflictTypeList[number]
 const SqlColumnCollatingTypeList = ['BINARY', 'NOCASE', 'RTRIM'] as const;
 export type SqlColumnCollatingType = typeof SqlColumnCollatingTypeList[number];
 
-const SqlColumnPrimaryKeyDirectionList = ['ASC', 'DESC'] as const;
-export type SqlPrimaryKeyDirection = typeof SqlColumnPrimaryKeyDirectionList[number];
+const SqlColumnDirectionList = ['ASC', 'DESC'] as const;
+export type SqlColumnDirection = typeof SqlColumnDirectionList[number];
 
 // https://www.sqlite.org/lang_createtable.html#the_default_clause
 const SqlColumnDefaultBuiltInList = ['BINARY', 'NOCASE', 'RTRIM'] as const;
 export type SqlColumnDefaultBuiltInType = typeof SqlColumnDefaultBuiltInList[number];
 
 export type SqlColumnOptions = {
-    primary?: boolean | SqlPrimaryKeyDirection
+    primary?: boolean | SqlColumnDirection
     index?: boolean
     notNull?: boolean | SqlColumnOnConflictType
     unique?: boolean | SqlColumnOnConflictType
     default?: number | string | SqlColumnDefaultBuiltInType | (() => string)
     collate?: SqlColumnCollatingType
     array?: boolean
+    ordered?: SqlColumnDirection
+    checks?: { emit: (column: SqlColumn) => string }[]
+}
+
+export class SqlColumnStringMax {
+    max: number
+    constructor(max: number) {
+        this.max = max
+    }
+    emit(column: SqlColumn): string {
+        return `LENGTH(${column.escapedName()}) <= ${this.max}`
+    }
+}
+
+export class SqlColumnStringMin {
+    min: number
+    constructor(max: number) {
+        this.min = max
+    }
+    emit(column: SqlColumn): string {
+        return `LENGTH(${column.escapedName()}) >= ${this.min}`
+    }
 }
 
 // https://www.sqlite.org/syntax/column-def.html
@@ -375,6 +453,14 @@ export class SqlColumn {
         return `${this.table.name}.${this.name}`
     }
 
+    escapedName(): string {
+        return `${config.wrapName(this.name)}`
+    }
+
+    escapedQualifiedName(): string {
+        return `${config.wrapName(this.table.name)}.${config.wrapName(this.name)}`
+    }
+
     isPrimaryKey(): boolean {
         if (this.options.primary)
             return true
@@ -391,9 +477,13 @@ export class SqlColumn {
         words.push(config.wrapName(this.name))
         words.push(this.type)
 
+        if (this.options.checks) {
+            words.push(`CHECK (${this.options.checks.map(c => c.emit(this)).join(' AND ')})`)
+        }
+
         if (this.options.primary) {
             words.push('PRIMARY KEY')
-            if (typeof this.options.primary === 'string' && sqlUtil.isColumnPrimaryKeyDirection(this.options.primary)) {
+            if (typeof this.options.primary === 'string' && sqlUtil.isColumnDirection(this.options.primary)) {
                 words.push(this.options.primary)
             }
         }
@@ -497,12 +587,130 @@ export const sqlUtil = {
     isColumnDefaultBuiltIn: (value: string): value is SqlColumnDefaultBuiltInType => {
         return SqlColumnDefaultBuiltInList.includes(value as SqlColumnDefaultBuiltInType)
     },
-    isColumnPrimaryKeyDirection: (value: string): value is SqlPrimaryKeyDirection => {
-        return SqlColumnPrimaryKeyDirectionList.includes(value as SqlPrimaryKeyDirection)
+    isColumnDirection: (value: string): value is SqlColumnDirection => {
+        return SqlColumnDirectionList.includes(value as SqlColumnDirection)
     },
     isForeignKeyClauseOnType: (value: string): value is SqlForeignKeyClauseOnType => {
         return SqlForeignKeyClauseOnList.includes(value as SqlForeignKeyClauseOnType)
     },
+}
 
+// ////////////////////////////////////////////////////////////////////////////
+// SQL Select
+// ////////////////////////////////////////////////////////////////////////////
 
+export type SelectColumnOptions = {
+    filterBy?: {
+        name?: string
+    }
+}
+
+export class SqlSelect {
+    columns: SqlColumn[] = []
+    joins: SqlJoinClause[] = []
+    wheres: SqlWhereClause[] = []
+
+    emit(): string {
+        const words: string[] = []
+
+        words.push('SELECT')
+        words.push(this.columns.map(c => c.escapedQualifiedName()).join(', '))
+        words.push('FROM')
+
+        const tables = [...new Set(this.columns.map(c => c.table).map(t => t.escapedName()))]
+        words.push(tables.join(', '))
+
+        const joins = this.joins.map(j => j.emit())
+        words.push(...joins)
+
+        const orderBys = this.columns
+            .filter(c => c.options.ordered && sqlUtil.isColumnDirection(c.options.ordered))
+            .map(c => `ORDER BY ${c.escapedQualifiedName()} ${c.options.ordered}`)
+        words.push(...orderBys)
+
+        if (this.wheres.length > 0) {
+            const wheres = this.wheres.map(w => w.emit()).join(' AND ')
+            words.push(`WHERE ${wheres}`)
+        }
+
+        return words.join(" ")
+    }
+
+    private hasColumn(column: SqlColumn): boolean {
+        return this.columns.find(c => c.qualifiedName() === column.qualifiedName()) !== undefined
+    }
+
+    addColums(tables: SqlTable[], options?: SelectColumnOptions) {
+        const columns = tables
+            .flatMap(t => t.columns)
+            .filter(c => options?.filterBy?.name && c.name !== options.filterBy.name || true)
+            .filter(c => !this.hasColumn(c))
+
+        this.columns.push(...columns)
+    }
+
+    joinOnColumn(from: SqlColumn, to: SqlColumn, options?: SqlJoinClauseOptions) {
+        this.joins.push(new SqlJoinClause(from, to, options))
+    }
+
+    joinOnTable(from: SqlTable, to: SqlTable, options?: SqlJoinClauseOptions) {
+        this.joinOnColumn(from.getPrimaryKeyOrThrow(), to.getPrimaryKeyOrThrow(), options)
+    }
+
+    where(column: SqlColumn, equals: string | number | boolean, options?: SqlWhereClauseOptions) {
+        this.wheres.push(new SqlWhereClause(column, equals, options))
+    }
+}
+
+export type SqlJoinClauseOptions = {
+}
+
+export class SqlJoinClause {
+    from: SqlColumn
+    to: SqlColumn
+    options: SqlJoinClauseOptions = {}
+
+    constructor(from: SqlColumn, to: SqlColumn, options?: SqlJoinClauseOptions) {
+        this.from = from
+        this.to = to
+        this.options = { ...this.options, ...options }
+    }
+
+    emit(): string {
+        const words: string[] = []
+        words.push('JOIN')
+        words.push(this.to.table.escapedName())
+        words.push('ON')
+        words.push(this.from.escapedQualifiedName())
+        words.push('=')
+        words.push(this.to.escapedQualifiedName())
+        return words.join(" ")
+    }
+}
+
+export type SqlWhereClauseOptions = {
+}
+
+export class SqlWhereClause {
+    column: SqlColumn
+    equals: string | number | boolean
+    options: SqlWhereClauseOptions = {}
+
+    constructor(column: SqlColumn, equals: string | number | boolean, options?: SqlWhereClauseOptions) {
+        this.column = column
+        this.equals = equals
+        this.options = { ...this.options, ...options }
+    }
+
+    emit(): string {
+        const words: string[] = []
+        words.push(this.column.escapedQualifiedName())
+        words.push('=')
+        if (typeof this.equals === 'string') {
+            words.push(`'${this.equals}'`)
+        } else {
+            words.push(this.equals.toString())
+        }
+        return words.join(" ")
+    }
 }

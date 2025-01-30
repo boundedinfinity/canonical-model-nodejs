@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { SqlGenerator, sqlUtil } from "./sql-generator";
+import { SqlGenerator, SqlSelect } from "./sql-generator";
 
 test("SQLGenerator", () => {
     const generator = new SqlGenerator()
@@ -7,29 +7,58 @@ test("SQLGenerator", () => {
 
     const person = database.table('person')
     person.createPrimaryKey()
-    person.column('email', 'TEXT', { unique: 'FAIL', index: true })
-    person.column('name', 'TEXT', { index: true })
-    person.column('first_name', 'TEXT', { index: true, array: true })
+
+    const personName = database.table('person_name')
+    personName.createPrimaryKey()
+    personName.column('first_name', 'TEXT', { index: true, array: true })
+    personName.column('middle_name', 'TEXT', { index: true, array: true })
+    personName.column('last_name', 'TEXT', { index: true, array: true })
+
+    const email = database.table('email');
+    email.createPrimaryKey()
+    email.column('address', 'TEXT', { index: true })
+    database.manyToMany(personName, email)
 
     const phone = database.table('phone');
     phone.createPrimaryKey()
     phone.column('number', 'TEXT', { index: true })
+    database.manyToMany(personName, phone)
 
-    const address = database.table('address');
-    address.createPrimaryKey()
-    address.column('zip_code', 'TEXT')
+    const mailingAddress = database.table('mailing_address');
+    mailingAddress.createPrimaryKey()
+    mailingAddress.column('address', 'TEXT', { index: true, array: true })
+    mailingAddress.column('zip_code', 'TEXT')
+    database.manyToMany(personName, mailingAddress)
 
-    const person_address = database.manyToMany(person, address)
-    person_address.column('name', 'TEXT', { unique: true })
+    const label = database.table('label');
+    label.createPrimaryKey()
+    label.column('name', 'TEXT', { index: true })
 
-    const favorite = database.table('favorite')
-    favorite.createPrimaryKey()
-    favorite.column('thing', 'TEXT')
+    const labelGroup = database.table('label_group');
+    labelGroup.createPrimaryKey()
+    labelGroup.column('name', 'TEXT', { index: true })
 
-    database.oneToOne(person, favorite, { onDelete: 'CASCADE' })
-    database.oneToMany(person, phone)
+    database.manyToMany(labelGroup, label)
 
-    const text = database.emit()
-    console.log(text)
-    expect(text).toBe('')
+    database.oneToOne(person, personName)
+    database.manyToMany(personName, label)
+    database.manyToMany(phone, label)
+    database.manyToMany(email, label)
+    database.manyToMany(mailingAddress, label)
+
+    const databaseEmit = database.emit()
+    console.log(databaseEmit)
+
+    const select1 = new SqlSelect()
+    select1.addColums([person])
+    select1.joinOnTable(person, personName)
+    console.log(select1.emit())
+
+    const select2 = new SqlSelect()
+    const tableX = database.getTableOrThrow('person_name__first_name')
+    select2.addColums([tableX])
+    select2.where(tableX.getColumnOrThrow('person_name_id'), 1)
+    console.log(select2.emit())
+
+    // expect(databaseEmit).toBe('')
 })

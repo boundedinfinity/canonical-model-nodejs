@@ -851,7 +851,7 @@ export class TsgLanguageGenerator {
         return found
     }
 
-    generate(): { [name: string]: string } {
+    emit(): { [name: string]: string } {
         const contents: { [name: string]: string } = {}
 
         this.files.forEach(file => {
@@ -865,7 +865,7 @@ export class TsgLanguageGenerator {
     }
 
     saveSync() {
-        Object.entries(this.generate()).forEach(([path, contents]) => {
+        Object.entries(this.emit()).forEach(([path, contents]) => {
             writeFileSync(path, contents)
         })
     }
