@@ -1,10 +1,10 @@
 // https://www.fullstory.com/blog/discriminated-unions-and-exhaustiveness-checking-in-typescript/
 
 import npath from 'node:path'
-import type { ProjectSchema, KindSchema, ObjectSchema } from './schema'
-import { schemaUtils } from './schema'
-import { KindRegistry } from './kind-registry'
-import { KindToSqlTranslator } from './kind-to-sql-translator'
+import type { ProjectSchema, KindSchema, ObjectSchema } from './kind'
+import { KindUtils, KindRegistry } from './kind'
+import { SqlGenerator } from './sql-generator'
+import { KindToSqlDdlTranslator, KindToSqlQueryTranslator } from './kind-to-sql-translator'
 import { stat } from 'node:fs'
 import {
     tsutils,
@@ -29,7 +29,7 @@ export class Generator {
     }
 
     private processTopLevelKinds(kind: KindSchema) {
-        const filename = tsutils.name('file', schemaUtils.getKindName(kind))
+        const filename = tsutils.name('file', KindUtils.getKindName(kind))
         const file = this.tsProject.getFile(filename)
 
         switch (kind.kind) {
@@ -43,11 +43,11 @@ export class Generator {
     private processZodSchema(file: TsgFile, kind: ObjectSchema) {
         const process = (current: KindSchema, currentName?: string) => {
             if (!currentName)
-                currentName = tsutils.name('ts-variable', schemaUtils.getKindName(current))
+                currentName = tsutils.name('ts-variable', KindUtils.getKindName(current))
 
             switch (current.kind) {
                 case 'object':
-                    const propName = tsutils.name('zod-schema', schemaUtils.getKindName(current))
+                    const propName = tsutils.name('zod-schema', KindUtils.getKindName(current))
                     const propFile = this.tsProject.findFile(propName)
 
                     if (propFile) {
@@ -108,11 +108,11 @@ export class Generator {
             }
         }
 
-        const zodName = tsutils.name('zod-schema', schemaUtils.getKindName(kind))
+        const zodName = tsutils.name('zod-schema', KindUtils.getKindName(kind))
         const properties: TsgObjectLiteralProperty[] = []
         kind.properties.forEach(property => process(property))
 
-        if (schemaUtils.hasValidation(kind)) {
+        if (KindUtils.hasValidation(kind)) {
             file.getImport('zod').addNamedImport('z')
         }
 
@@ -129,7 +129,7 @@ export class Generator {
     private processTypescriptClass(file: TsgFile, classKind: ObjectSchema) {
         const process = (propKind: KindSchema, prop?: TsgProperty) => {
             if (!prop) {
-                const propName = tsutils.name('ts-property', schemaUtils.getKindName(propKind))
+                const propName = tsutils.name('ts-property', KindUtils.getKindName(propKind))
                 prop = tsClass.getProperty(propName)
                 prop.modifiers.optional = propKind.optional
             }
@@ -137,7 +137,7 @@ export class Generator {
             switch (propKind.kind) {
                 case 'object':
                     if (this.registry.isRegistered(propKind)) {
-                        const otherName = tsutils.name('ts-class', schemaUtils.getKindName(propKind))
+                        const otherName = tsutils.name('ts-class', KindUtils.getKindName(propKind))
                         const otherClass = this.tsProject.getClass(otherName)
                         if (otherClass) {
                             prop.kind = otherClass
@@ -183,7 +183,7 @@ export class Generator {
             }
         }
 
-        const classKindKind = schemaUtils.getKindKind(classKind)
+        const classKindKind = KindUtils.getKindKind(classKind)
         const tsClassName = tsutils.name('ts-class', classKindKind)
 
         file.getImport('uuid').addNamedImport(
@@ -207,7 +207,7 @@ export class Generator {
         this.registry.validate()
 
         this.registry.registry.values().forEach(kind => {
-            const classKindKind = schemaUtils.getKindKind(kind)
+            const classKindKind = KindUtils.getKindKind(kind)
             const filename = tsutils.name('file', classKindKind)
             const tsClassName = tsutils.name('ts-class', classKindKind)
             const file = this.tsProject.getFile(filename)
@@ -217,10 +217,13 @@ export class Generator {
 
         this.registry.registry.values().forEach(kind => this.processTopLevelKinds(kind))
 
-        const sqlTranslator = new KindToSqlTranslator(this.registry)
-        const sql = sqlTranslator.process().emit()
-        console.log(sql)
-        console.log()
+        const sqlGenerator = new SqlGenerator()
+        const sqlTranslator = new KindToSqlDdlTranslator(this.registry, sqlGenerator)
+        sqlTranslator.process()
+        console.log(sqlGenerator.emit())
+
+        const sqlQueryTranslator = new KindToSqlQueryTranslator(this.registry, sqlGenerator)
+        console.log(sqlQueryTranslator.emit())
     }
 
     processProject() {

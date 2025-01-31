@@ -5,11 +5,109 @@
 
 import utils from './utils'
 
+export type KindRegistryOptions = {
+    failOnDuplicate?: boolean
+}
+
+export class KindRegistry {
+    registry = new Map<string, KindSchema>()
+    options: KindRegistryOptions = {}
+
+    constructor(options?: KindRegistryOptions) {
+        this.options = { ...this.options, ...options }
+    }
+
+    register(...kinds: KindSchema[]): void {
+        const register = (current: KindSchema) => {
+            const typ = KindUtils.getKindKind(current)
+            const name = KindUtils.getKindName(current)
+
+            if (!this.registry.has(name)) {
+                console.log(`registering ${name}`)
+                this.registry.set(name, current)
+            } else {
+                if (this.options.failOnDuplicate) {
+                    throw new Error(`duplicate kind: ${name}`)
+                } else {
+                    console.log(`already registered ${name}`)
+                }
+            }
+        }
+
+        kinds.forEach(kind => register(kind))
+    }
+
+    private check(nameOrKind: string | KindSchema): void {
+        const found = this.isRegistered(nameOrKind)
+        if (!found) {
+            let name: string
+            if (typeof nameOrKind === 'string')
+                name = nameOrKind
+            else
+                name = KindUtils.getKindName(nameOrKind)
+
+            throw new Error(`kind not found: ${name}`)
+        }
+    }
+
+    validate() {
+        const validate = (kind: KindSchema, parent?: KindSchema) => {
+            switch (kind.kind) {
+                case 'object':
+                    this.check(kind)
+                    kind.properties.forEach(property => validate(property, kind))
+                    break
+                case 'array':
+                    validate(kind.items, parent)
+                    break
+                case 'ref':
+                    validate(kind.ref, parent)
+                    break
+                case 'enum':
+                case 'bool':
+                case 'int':
+                case 'string':
+                    break
+            }
+        }
+
+        this.registry.values().forEach(kind => validate(kind))
+    }
+
+    isRegistered(nameOrKind: string | KindSchema): boolean {
+        let name: string
+        if (typeof nameOrKind === 'string')
+            name = nameOrKind
+        else
+            name = KindUtils.getKindName(nameOrKind)
+
+        return this.registry.has(name)
+    }
+
+    get(name: string): KindSchema | undefined {
+        return this.registry.get(name)
+    }
+
+    getOrThrow(name: string): KindSchema {
+        const kind = this.get(name)
+        if (!kind) {
+            throw new Error(`Kind not found: ${name}`)
+        }
+        return kind
+    }
+
+    isPrimitive(kind: KindSchema): boolean {
+        const resolved = KindUtils.getKindKind(kind)
+        return KindUtils.isPrimitive(resolved)
+    }
+}
+
+
 // https://mvasilkov.animuchan.net/typescript-positive-integer-type
 type PositiveInteger<T extends number> = `${T}` extends '0' | `-${any}` | `${any}.${any}` ? never : T
 type Prettify<T> = { [K in keyof T]: T[K]; } & {};
 
-export const schemaUtils = {
+export const KindUtils = {
     hasValidation: (kind: KindSchema): boolean => {
         switch (kind.kind) {
             case 'object':
@@ -43,10 +141,10 @@ export const schemaUtils = {
                     || utils.type.isDefined(kind.max)
                     || utils.type.isDefined(kind.sorted)
                     || utils.type.isDefined(kind.ordered)
-                    || schemaUtils.hasValidation(kind.items)
+                    || KindUtils.hasValidation(kind.items)
             case 'ref':
                 return utils.type.isDefined(kind.optional)
-                    || schemaUtils.hasValidation(kind.ref)
+                    || KindUtils.hasValidation(kind.ref)
         }
 
         return false
@@ -64,10 +162,10 @@ export const schemaUtils = {
                 name = kind.name
                 break
             case 'array':
-                name = kind.name || schemaUtils.getKindName(kind.items)
+                name = kind.name || KindUtils.getKindName(kind.items)
                 break
             case 'ref':
-                name = kind.name || schemaUtils.getKindName(kind.ref)
+                name = kind.name || KindUtils.getKindName(kind.ref)
                 break
         }
 
@@ -92,10 +190,10 @@ export const schemaUtils = {
                 name = 'string'
                 break
             case 'ref':
-                name = schemaUtils.getKindKind(kind.ref)
+                name = KindUtils.getKindKind(kind.ref)
                 break
             case 'array':
-                name = schemaUtils.getKindKind(kind.items)
+                name = KindUtils.getKindKind(kind.items)
                 break
             case 'enum':
                 // TODO
@@ -112,14 +210,23 @@ export const schemaUtils = {
 
         return name!
     },
+
+    isPrimitive: (value: string): value is KindType => {
+        return KindTypeList.includes(value as KindType)
+    },
 }
+
+const KindTypeList = ['string', 'int', 'float', 'bool'] as const;
+type KindType = typeof KindTypeList[number];
 
 type SharedSchema = {
     name?: string
     description?: string
     version?: string
+    searchable?: boolean
     persist?: {
         name?: string
+        indexed?: boolean
     }
     serialize?: {
         name?: string
@@ -185,7 +292,6 @@ export type RefSchema = {
     ref: KindSchema
 }
 
-
 export type ArraySchema = {
     kind: "array"
     min?: PositiveInteger<number>
@@ -240,25 +346,5 @@ export type ProjectSchema = {
     operations?: OperationSchema[]
 }
 
-export class SchemaBuilder {
-    project: ProjectSchema = {}
 
-    private s<T extends KindSchema>(s: T): T {
-        if (!this.project.kinds) this.project.kinds = []
-        this.project.kinds.push(s)
-        return s
-    }
-
-    string(name: string): StringSchema { return this.s({ kind: 'string', name }) }
-    int(name: string): IntSchema { return this.s({ kind: 'int', name }) }
-    // enum(name: string, ...values: EnumMember[]): EnumSchema { return this.s({ kind: 'enum', name, values }) }
-    bool(name: string): BoolSchema { return this.s({ kind: 'bool', name }) }
-    array(name: string, items: KindSchema): ArraySchema { return this.s({ kind: 'array', name, items }) }
-
-    getType(name: string): KindSchema | undefined { return this.project?.kinds?.find((s => s.name == name)) }
-
-    getRef(nameOrSchema: string | KindSchema): RefSchema | undefined {
-        return undefined
-    }
-}
 

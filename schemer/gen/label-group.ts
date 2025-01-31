@@ -17,7 +17,7 @@ name: string
 
 
 export const LabelGroupZod = z.object({
-    name : z.string().min(100),
+    name : z.string().min(2).min(100),
     description : z.string().min(500).optional(),
     labels : LabelZod
 })

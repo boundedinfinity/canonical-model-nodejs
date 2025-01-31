@@ -1,17 +1,19 @@
-import { v4 as uuid, NIL as NIL_UUID } from 'uuid';
-import { z } from 'zod';
+import { v4 as uuid, NIL as NIL_UUID } from 'uuid' ;
+import { z } from 'zod' ;
 
 
 export class TestThing {
-    id: string = NIL_UUID;
-    testStringArrayOptional?: string[];
-    constructor() { }
+    id : string = NIL_UUID ;
+    testStringArrayRequired : string[] = [] ;
+    constructor (
+testStringArrayRequired: string[]
+){
+        this.testStringArrayRequired = testStringArrayRequired
+    }
 }
 
 
 export const TestThingZod = z.object({
-    testStringArrayOptional: z.array(
-        z.string().trim().min(1).min(2).startsWith('a').endsWith('z').regex(new RegExp('.*')).includes('b')
-    ).optional()
+    testStringArrayRequired : z.string().trim().min(1).min(2).startsWith('a').endsWith('z').regex(new RegExp('.*')).includes('b')
 })
 

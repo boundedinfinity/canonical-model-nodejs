@@ -1,4 +1,4 @@
-import type { ProjectSchema, KindSchema } from './schema'
+import type { ProjectSchema, KindSchema } from './kind'
 import { Generator } from './generator'
 
 const stringArgs = { min: 1, max: 2, startsWith: 'a', endsWith: 'z', pattern: '.*', includes: 'b', excludes: 'y', trimmed: true }
@@ -17,8 +17,8 @@ const testThing: KindSchema = {
         // { kind: 'bool', name: 'Test Boolean Required', },
         // { kind: 'bool', name: 'Test Boolean Optional', optional: true },
 
-        // { kind: 'array', name: 'Test String Array Required', items: { kind: 'string', ...stringArgs } },
-        { kind: 'array', name: 'Test String Array Optional', items: { kind: 'string', ...stringArgs }, optional: true },
+        { kind: 'array', name: 'Test String Array Required', items: { kind: 'string', ...stringArgs } },
+        // { kind: 'array', name: 'Test String Array Optional', items: { kind: 'string', ...stringArgs }, optional: true },
         // { kind: 'array', name: 'Test Int Array Required', items: { kind: 'int', ...numberArgs } },
         // { kind: 'array', name: 'Test Int Array Optional', items: { kind: 'int', ...numberArgs }, optional: true },
         // { kind: 'array', name: 'Test Float Array Required', items: { kind: 'float', ...numberArgs } },
@@ -32,7 +32,7 @@ const label: KindSchema = {
     kind: 'object',
     name: 'Label',
     properties: [
-        { kind: 'string', name: 'Name', min: 2, max: 100 },
+        { kind: 'string', name: 'Name', min: 2, max: 100, searchable: true },
         { kind: 'string', name: 'Description', max: 500, optional: true },
     ]
 }
@@ -41,7 +41,7 @@ const labelGroup: KindSchema = {
     kind: 'object',
     name: 'Label Group',
     properties: [
-        { kind: 'string', name: 'Name', max: 100 },
+        { kind: 'string', name: 'Name', min: 2, max: 100, searchable: true },
         { kind: 'string', name: 'Description', max: 500, optional: true, },
         { kind: 'array', name: 'Labels', items: { kind: 'ref', ref: label }, optional: true }
     ]
@@ -101,9 +101,9 @@ const personName: KindSchema = {
 
 const project: ProjectSchema = {
     kinds: [
-        testThing,
-        // label,
-        // labelGroup,
+        // testThing,
+        label,
+        labelGroup,
         // personName, 
         // personNameHonorificType, 
         // personNameOrder, 

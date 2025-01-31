@@ -1,6 +1,6 @@
 import npath from 'node:path'
 import { writeFileSync } from 'node:fs'
-import type { KindSchema } from './schema'
+import type { KindSchema } from './kind'
 import utils from './utils'
 import prettier from "@prettier/sync";
 import type { getAsset } from 'node:sea';

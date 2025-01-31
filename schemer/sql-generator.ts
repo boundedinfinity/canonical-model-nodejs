@@ -2,26 +2,34 @@ import { foreignKey } from "drizzle-orm/mysql-core"
 
 const config = {
     newline: '\n',
-    indent(text: string, options?: IndentOptions): string {
-        let out = text
-
-        if (options?.level && options?.char) {
-            const level = options.level
-            const char = options.char
-            let lines = out.split('\n')
-            lines = lines.map(line => `${char.repeat(level)}${line}`)
-            out = lines.join('\n')
-        }
-
-        return out
-    },
-
     wrapName: (name: string) => '`' + name + '`',
 }
 
-type IndentOptions = {
-    level?: number
-    char?: string
+class Indenter {
+    level: number = 0
+    char: string = '    '
+
+    indent(text: string): string {
+        let prefix = this.char.repeat(this.level)
+        return prefix + text
+    }
+
+    indentLines(lines: string[]): string[] {
+        return lines.map(l => this.indent(l))
+    }
+
+    inc() {
+        this.level++
+    }
+
+    dec() {
+        this.level--
+        if (this.level < 0) this.level = 0
+    }
+}
+
+abstract class Emitter {
+    abstract emit(): string
 }
 
 // ////////////////////////////////////////////////////////////////////////////
@@ -29,15 +37,33 @@ type IndentOptions = {
 // ////////////////////////////////////////////////////////////////////////////
 
 export type SqlGeneratorOptions = {
-    indent?: IndentOptions
+    array_suffix: string
+}
+
+const defaultOptions: SqlGeneratorOptions = {
+    array_suffix: '__array'
 }
 
 export class SqlGenerator {
     databases: SqlDatabase[] = []
-    options: SqlGeneratorOptions = { indent: { char: ' ', level: 0 } }
+    options: SqlGeneratorOptions = defaultOptions
 
-    constructor(options?: SqlGeneratorOptions) {
+    constructor(options?: Partial<SqlGeneratorOptions>) {
         this.options = { ...this.options, ...options }
+    }
+
+    validate() {
+        this.databases.forEach(d => {
+            d.tables.filter(t => !t.name.endsWith(this.options.array_suffix)).forEach(t => {
+                if (!t.columns.some(c => c.isPrimaryKey()))
+                    throw new Error(`table ${t.name} has no primary key`)
+
+                t.columns.forEach(c => {
+                    if (c.type === undefined || c.type === null)
+                        throw new Error(`column ${c.qualifiedName()} has column with no type`)
+                })
+            })
+        })
     }
 
     database(name: string, options?: SqlDatabaseOptions): SqlDatabase {
@@ -47,6 +73,7 @@ export class SqlGenerator {
     }
 
     emit(): string {
+        this.validate()
         const lines: string[] = []
         lines.push(...this.databases.map(d => d.emit()))
         return lines.join(config.newline)
@@ -59,7 +86,6 @@ export class SqlGenerator {
 
 export type SqlDatabaseOptions = {
     pragmas?: SqlPragma[]
-    indent?: IndentOptions
 }
 
 export class SqlDatabase {
@@ -123,25 +149,28 @@ export class SqlDatabase {
         return text
     }
 
-    oneToOne(t0: SqlTable, t1: SqlTable, options?: SqlForeignKeyOptions) {
+    oneToOneByTable(t0: SqlTable, t1: SqlTable, options?: SqlForeignKeyOptions) {
         const fk0 = t0.getPrimaryKeyOrThrow()
-        const name = sqlUtil.foreignKeyName(fk0)
-        const ref = t1.column(name, 'TEXT', { unique: true })
+        const ref = t1.column(fk0.foreignKeyName(), fk0.type, { unique: true })
         ref.foreignKey(fk0, options)
     }
 
-    oneToMany(t0: SqlTable, t1: SqlTable, options?: SqlForeignKeyOptions) {
+    oneToManyByTable(t0: SqlTable, t1: SqlTable, options?: SqlForeignKeyOptions) {
         const fk0 = t0.getPrimaryKeyOrThrow()
-        const name = sqlUtil.foreignKeyName(fk0)
-        const ref = t1.column(name, 'TEXT')
+        const ref = t1.column(fk0.foreignKeyName(), fk0.type, { notNull: true })
         ref.foreignKey(fk0, options)
     }
 
-    manyToOne(t0: SqlTable, t1: SqlTable, options?: SqlForeignKeyOptions) {
-        this.oneToMany(t1, t0, options)
+    oneToMany(col0: SqlColumn, table1: SqlTable, options?: SqlForeignKeyOptions) {
+        const ref = table1.column(col0.foreignKeyName(), col0.type)
+        ref.foreignKey(col0, options)
     }
 
-    manyToMany(t0: SqlTable, t1: SqlTable): SqlTable {
+    manyToOneByTable(t0: SqlTable, t1: SqlTable, options?: SqlForeignKeyOptions) {
+        this.oneToManyByTable(t1, t0, options)
+    }
+
+    manyToManyBytable(t0: SqlTable, t1: SqlTable): SqlTable {
         const fk0 = t0.getPrimaryKeyOrThrow()
         const fk1 = t1.getPrimaryKeyOrThrow()
 
@@ -152,10 +181,20 @@ export class SqlDatabase {
         pk0.foreignKey(fk0)
         pk1.foreignKey(fk1)
 
-        this.tables.push(table)
         return table
     }
 
+    manyToMany(col0: SqlColumn, col1: SqlColumn): SqlTable {
+        const table = this.table(sqlUtil.joinTableName(col0, col1))
+        const pk0 = table.column(col0.foreignKeyName(), col0.type, { primary: true })
+        const pk1 = table.column(col1.foreignKeyName(), col1.type, { primary: true })
+
+        pk0.foreignKey(col0)
+        pk1.foreignKey(col1)
+
+        this.tables.push(table)
+        return table
+    }
 }
 
 // ////////////////////////////////////////////////////////////////////////////
@@ -213,40 +252,64 @@ export class CreateSqlTable {
     }
 
     emit(): string {
-        const words: string[] = ['CREATE']
+        const indenter = new Indenter()
+        const lines: string[] = []
+        let words: string[] = ['CREATE']
+
         if (this.options.temporary) words.push('TEMPORARY')
         words.push('TABLE')
+
         if (this.options.ifNotExists) words.push('IF NOT EXISTS')
         words.push(config.wrapName(this.table.name))
         words.push('(')
 
-        const columns: string[] = []
-        columns.push(...this.table.columns.map(c => c.emit()))
-        words.push(columns.join(', '))
+        lines.push(words.join(' '))
+        words = []
 
-        const checks = this.table.columns
-            .filter(col => col.options.checks !== undefined)
-            .flatMap(col => col.options.checks?.map(chk => chk.emit(col)))
-            .filter(chk => chk !== undefined)
+        indenter.inc()
 
-        if (checks.length > 0) {
-            words.push('CHECK (')
-            words.push(checks.join(' AND '))
-            words.push(')')
+        if (this.table.columns.length > 0) {
+            const emits = this.table.columns
+                .map(c => c.emit())
+                .map(c => indenter.indent(c))
+                .join(",|")
+                .split('|')
+            lines.push(...emits)
         }
 
-        const foreignKeys: string[] = []
-        foreignKeys.push(...this.table.foreignKeys.map(fk => fk.emit()))
-        words.push(foreignKeys.join(', '))
+        if (this.table.checks.length > 0) {
+            lines.push(indenter.indent('CHECK ('))
+            indenter.inc()
+            const emits = this.table.checks
+                .map(c => c.emit())
+                .map(c => indenter.indent(c))
+                .join(' AND|')
+                .split('|')
+            lines.push(...emits)
+            indenter.dec()
+            lines.push(indenter.indent(')'))
+        }
 
-        words.push(')')
+        if (this.table.foreignKeys.length > 0) {
+            const emits = this.table.foreignKeys
+                .map(fk => fk.emit())
+                .map(c => indenter.indent(c))
+                .join(',|')
+                .split('|')
+            lines.push(...emits)
+        }
+
+        indenter.dec()
 
         if (this.options.withoutRowId) words.push('WITHOUT ROWID')
         if (this.options.strict) words.push('STRICT')
+        words.push(')')
 
         let text = words.join(' ')
         text += ';'
-        return text
+        lines.push(words.join(' '))
+        words = []
+        return lines.join(config.newline)
     }
 }
 
@@ -285,11 +348,11 @@ export class SqlForeignKey {
         words.push(config.wrapName(this.to.name))
         words.push(')')
 
-        if (this.options?.onDelete && sqlUtil.isForeignKeyClauseOnType(this.options.onDelete)) {
+        if (this.options?.onDelete && sqlUtil.is.foreignKeyClauseOnType(this.options.onDelete)) {
             words.push(`ON DELETE ${this.options.onDelete}`)
         }
 
-        if (this.options?.onUpdate && sqlUtil.isForeignKeyClauseOnType(this.options.onUpdate)) {
+        if (this.options?.onUpdate && sqlUtil.is.foreignKeyClauseOnType(this.options.onUpdate)) {
             words.push(`ON UPDATE ${this.options.onUpdate}`)
         }
 
@@ -311,6 +374,7 @@ export class SqlTable {
     name: string
     columns: SqlColumn[] = []
     foreignKeys: SqlForeignKey[] = []
+    checks: Emitter[] = []
     options: SqlTableOptions = {}
 
     constructor(database: SqlDatabase, name: string, options?: SqlTableOptions) {
@@ -331,20 +395,14 @@ export class SqlTable {
         return new SqlDropTable(this.database, this.name, { ...this.options.drop, ...options })
     }
 
-    column(name: string, type: SqlColumnType, options?: SqlColumnOptions): SqlColumn {
-        if (options?.array) {
-            const tablename = this.name + '__' + name
-            const table = this.database.table(tablename)
-            table.column('index', 'INTEGER', { unique: true, ordered: 'ASC' })
-            const options2 = { ...options, array: false }
-            const column = table.column('name', type, options2)
-            this.database.oneToMany(this, table)
-            return column
-        } else {
-            const column = new SqlColumn(this, name, type, options)
-            this.columns.push(column)
-            return column
-        }
+    addCheck(check: Emitter) {
+        this.checks.push(check)
+    }
+
+    column(name: string, typ?: SqlColumnType, options?: SqlColumnOptions): SqlColumn {
+        const column = new SqlColumn(this, name, typ, options)
+        this.columns.push(column)
+        return column
     }
 
     foreignKey(from: SqlColumn, to: SqlColumn, options?: SqlForeignKeyOptions): SqlForeignKey {
@@ -406,53 +464,58 @@ export type SqlColumnDefaultBuiltInType = typeof SqlColumnDefaultBuiltInList[num
 
 export type SqlColumnOptions = {
     primary?: boolean | SqlColumnDirection
-    index?: boolean
     notNull?: boolean | SqlColumnOnConflictType
     unique?: boolean | SqlColumnOnConflictType
     default?: number | string | SqlColumnDefaultBuiltInType | (() => string)
     collate?: SqlColumnCollatingType
-    array?: boolean
     ordered?: SqlColumnDirection
-    checks?: { emit: (column: SqlColumn) => string }[]
 }
 
 export class SqlColumnTextMax {
+    column: SqlColumn
     max: number
-    constructor(max: number) {
+    constructor(column: SqlColumn, max: number) {
+        this.column = column
         this.max = max
     }
-    emit(column: SqlColumn): string {
-        return `LENGTH(${column.escapedName()}) <= ${this.max}`
+    emit(): string {
+        return `LENGTH(${this.column.escapedName()}) <= ${this.max}`
     }
 }
 
 export class SqlColumnTextMin {
+    column: SqlColumn
     min: number
-    constructor(max: number) {
+    constructor(column: SqlColumn, max: number) {
+        this.column = column
         this.min = max
     }
-    emit(column: SqlColumn): string {
-        return `LENGTH(${column.escapedName()}) >= ${this.min}`
+    emit(): string {
+        return `LENGTH(${this.column.escapedName()}) >= ${this.min}`
     }
 }
 
 export class SqlColumnNumberMax {
+    column: SqlColumn
     max: number
-    constructor(max: number) {
+    constructor(column: SqlColumn, max: number) {
+        this.column = column
         this.max = max
     }
-    emit(column: SqlColumn): string {
-        return `${column.escapedName()} <= ${this.max}`
+    emit(): string {
+        return `${this.column.escapedName()} <= ${this.max}`
     }
 }
 
 export class SqlColumnNumberMin {
+    column: SqlColumn
     min: number
-    constructor(max: number) {
+    constructor(column: SqlColumn, max: number) {
+        this.column = column
         this.min = max
     }
-    emit(column: SqlColumn): string {
-        return `${column.escapedName()} >= ${this.min}`
+    emit(): string {
+        return `${this.column.escapedName()} >= ${this.min}`
     }
 }
 
@@ -460,19 +523,14 @@ export class SqlColumnNumberMin {
 export class SqlColumn {
     table: SqlTable
     name: string
-    type: SqlColumnType
+    type?: SqlColumnType
     options: SqlColumnOptions = {}
 
-    constructor(table: SqlTable, name: string, type: SqlColumnType, options?: SqlColumnOptions) {
+    constructor(table: SqlTable, name: string, typ?: SqlColumnType, options?: SqlColumnOptions) {
         this.table = table
+        this.type = typ;
         this.name = name
-        this.type = type
         this.options = { ...this.options, ...options }
-
-        if (this.options.index) {
-            const index = new SqlIndex(this)
-            this.table.database.indexes.push(index)
-        }
     }
 
     foreignKeyName(): string {
@@ -505,25 +563,25 @@ export class SqlColumn {
     emit(): string {
         const words: string[] = []
         words.push(config.wrapName(this.name))
-        words.push(this.type)
+        words.push(this.type!)
 
         if (this.options.primary) {
             words.push('PRIMARY KEY')
-            if (typeof this.options.primary === 'string' && sqlUtil.isColumnDirection(this.options.primary)) {
+            if (typeof this.options.primary === 'string' && sqlUtil.is.columnDirection(this.options.primary)) {
                 words.push(this.options.primary)
             }
         }
 
         if (this.options.notNull) {
             words.push('NOT NULL')
-            if (typeof this.options.notNull === 'string' && sqlUtil.isColumnOnConflictType(this.options.notNull)) {
+            if (typeof this.options.notNull === 'string' && sqlUtil.is.columnOnConflictType(this.options.notNull)) {
                 words.push(`ON CONFLICT ${this.options.notNull}`)
             }
         }
 
         if (this.options.unique) {
             words.push('UNIQUE')
-            if (typeof this.options.unique === 'string' && sqlUtil.isColumnOnConflictType(this.options.unique)) {
+            if (typeof this.options.unique === 'string' && sqlUtil.is.columnOnConflictType(this.options.unique)) {
                 words.push(`ON CONFLICT ${this.options.unique}`)
             }
         }
@@ -598,27 +656,31 @@ const SqlPragmaList = ["analysis_limit", "application_id", "auto_vacuum", "autom
 export type SqlPragma = typeof SqlPragmaList[number];
 
 export const sqlUtil = {
-    isPragma: (value: string): value is SqlPragma => {
-        return SqlPragmaList.includes(value as SqlPragma)
+    is: {
+        pragma: (value: string): value is SqlPragma => {
+            return SqlPragmaList.includes(value as SqlPragma)
+        },
+        columnType: (value: string): value is SqlColumnType => {
+            return SqlColumnTypeList.includes(value as SqlColumnType)
+        },
+        columnOnConflictType: (value: string): value is SqlColumnOnConflictType => {
+            return SqlColumnOnConflictTypeList.includes(value as SqlColumnOnConflictType)
+        },
+        columnCollatingType: (value: string): value is SqlColumnCollatingType => {
+            return SqlColumnCollatingTypeList.includes(value as SqlColumnCollatingType)
+        },
+        columnDefaultBuiltIn: (value: string): value is SqlColumnDefaultBuiltInType => {
+            return SqlColumnDefaultBuiltInList.includes(value as SqlColumnDefaultBuiltInType)
+        },
+        columnDirection: (value: string): value is SqlColumnDirection => {
+            return SqlColumnDirectionList.includes(value as SqlColumnDirection)
+        },
+        foreignKeyClauseOnType: (value: string): value is SqlForeignKeyClauseOnType => {
+            return SqlForeignKeyClauseOnList.includes(value as SqlForeignKeyClauseOnType)
+        },
+
     },
-    isColumnType: (value: string): value is SqlColumnType => {
-        return SqlColumnTypeList.includes(value as SqlColumnType)
-    },
-    isColumnOnConflictType: (value: string): value is SqlColumnOnConflictType => {
-        return SqlColumnOnConflictTypeList.includes(value as SqlColumnOnConflictType)
-    },
-    isColumnCollatingType: (value: string): value is SqlColumnCollatingType => {
-        return SqlColumnCollatingTypeList.includes(value as SqlColumnCollatingType)
-    },
-    isColumnDefaultBuiltIn: (value: string): value is SqlColumnDefaultBuiltInType => {
-        return SqlColumnDefaultBuiltInList.includes(value as SqlColumnDefaultBuiltInType)
-    },
-    isColumnDirection: (value: string): value is SqlColumnDirection => {
-        return SqlColumnDirectionList.includes(value as SqlColumnDirection)
-    },
-    isForeignKeyClauseOnType: (value: string): value is SqlForeignKeyClauseOnType => {
-        return SqlForeignKeyClauseOnList.includes(value as SqlForeignKeyClauseOnType)
-    },
+
     foreignKeyName: (column: SqlColumn): string => {
         const name = `${column.table.name}_${column.name}`
         return name
@@ -633,118 +695,124 @@ export const sqlUtil = {
 // SQL Select
 // ////////////////////////////////////////////////////////////////////////////
 
-export type SelectColumnOptions = {
-    filterBy?: {
-        name?: string
-    }
+export type SqlSelectOptions = {
+    placeholder: string
 }
 
 export class SqlSelect {
-    columns: SqlColumn[] = []
-    joins: SqlJoinClause[] = []
-    wheres: SqlWhereClause[] = []
-
-    emit(): string {
-        const words: string[] = []
-
-        words.push('SELECT')
-        words.push(this.columns.map(c => c.escapedQualifiedName()).join(', '))
-        words.push('FROM')
-
-        const tables = [...new Set(this.columns.map(c => c.table).map(t => t.escapedName()))]
-        words.push(tables.join(', '))
-
-        const joins = this.joins.map(j => j.emit())
-        words.push(...joins)
-
-        const orderBys = this.columns
-            .filter(c => c.options.ordered && sqlUtil.isColumnDirection(c.options.ordered))
-            .map(c => `ORDER BY ${c.escapedQualifiedName()} ${c.options.ordered}`)
-        words.push(...orderBys)
-
-        if (this.wheres.length > 0) {
-            const wheres = this.wheres.map(w => w.emit()).join(' AND ')
-            words.push(`WHERE ${wheres}`)
-        }
-
-        return words.join(" ")
+    emitters: Emitter[] = []
+    options: SqlSelectOptions = {
+        placeholder: '?'
     }
 
-    private hasColumn(column: SqlColumn): boolean {
-        return this.columns.find(c => c.qualifiedName() === column.qualifiedName()) !== undefined
-    }
-
-    addColums(tables: SqlTable[], options?: SelectColumnOptions) {
-        const columns = tables
-            .flatMap(t => t.columns)
-            .filter(c => options?.filterBy?.name && c.name !== options.filterBy.name || true)
-            .filter(c => !this.hasColumn(c))
-
-        this.columns.push(...columns)
-    }
-
-    joinOnColumn(from: SqlColumn, to: SqlColumn, options?: SqlJoinClauseOptions) {
-        this.joins.push(new SqlJoinClause(from, to, options))
-    }
-
-    joinOnTable(from: SqlTable, to: SqlTable, options?: SqlJoinClauseOptions) {
-        this.joinOnColumn(from.getPrimaryKeyOrThrow(), to.getPrimaryKeyOrThrow(), options)
-    }
-
-    where(column: SqlColumn, equals: string | number | boolean, options?: SqlWhereClauseOptions) {
-        this.wheres.push(new SqlWhereClause(column, equals, options))
-    }
-}
-
-export type SqlJoinClauseOptions = {
-}
-
-export class SqlJoinClause {
-    from: SqlColumn
-    to: SqlColumn
-    options: SqlJoinClauseOptions = {}
-
-    constructor(from: SqlColumn, to: SqlColumn, options?: SqlJoinClauseOptions) {
-        this.from = from
-        this.to = to
+    constructor(options?: Partial<SqlSelectOptions>) {
         this.options = { ...this.options, ...options }
     }
 
+    private push(fn: () => string): SqlSelect {
+        this.emitters.push(new class extends Emitter {
+            emit(): string { return fn() }
+        })
+        return this
+    }
+
+    select(...vs: (SqlTable | SqlColumn)[]): SqlSelect {
+        this.push(() => { return SqlKeyword.SELECT })
+
+        const selects = vs.map(v => {
+            if (v instanceof SqlTable)
+                v.columns.forEach(c => this.push(() => c.escapedQualifiedName()))
+            if (v instanceof SqlColumn)
+                this.push(() => v.escapedQualifiedName())
+        })
+
+        return this
+    }
+
+    where(): SqlSelect {
+        return this.push(() => { return SqlKeyword.WHERE })
+    }
+
+    column(c: SqlColumn): SqlSelect {
+        return this.push(() => c.escapedQualifiedName())
+    }
+
+    placeholder(): SqlSelect {
+        return this.push(() => `${this.options.placeholder}`)
+    }
+
+    private op(op: SqlOperator): SqlSelect { return this.push(() => op) }
+    eq(): SqlSelect { return this.op(SqlOperator.Eq) }
+    ne(): SqlSelect { return this.op(SqlOperator.Ne) }
+    not(): SqlSelect { return this.op(SqlOperator.NOT) }
+    and(): SqlSelect { return this.op(SqlOperator.AND) }
+    or(): SqlSelect { return this.op(SqlOperator.OR) }
+    between(): SqlSelect { return this.op(SqlOperator.BETWEEN) }
+    isNot(): SqlSelect { this.op(SqlOperator.IS); return this.op(SqlOperator.NOT) }
+    semicolon(): SqlSelect { return this.push(() => ';') }
+
     emit(): string {
         const words: string[] = []
-        words.push('JOIN')
-        words.push(this.to.table.escapedName())
-        words.push('ON')
-        words.push(this.from.escapedQualifiedName())
-        words.push('=')
-        words.push(this.to.escapedQualifiedName())
-        return words.join(" ")
+
+        this.emitters.forEach(e => words.push(e.emit()))
+
+        return words.join(' ')
     }
 }
 
-export type SqlWhereClauseOptions = {
-}
+class EnumHelper<T extends { [k: string]: string }, S extends string> {
+    private e: T
 
-export class SqlWhereClause {
-    column: SqlColumn
-    equals: string | number | boolean
-    options: SqlWhereClauseOptions = {}
+    constructor(e: T) { this.e = e }
 
-    constructor(column: SqlColumn, equals: string | number | boolean, options?: SqlWhereClauseOptions) {
-        this.column = column
-        this.equals = equals
-        this.options = { ...this.options, ...options }
+    includes(s: S): boolean {
+        return typeof s === 'string' && Object.values(this.e).includes(s);
     }
 
-    emit(): string {
-        const words: string[] = []
-        words.push(this.column.escapedQualifiedName())
-        words.push('=')
-        if (typeof this.equals === 'string') {
-            words.push(`'${this.equals}'`)
-        } else {
-            words.push(this.equals.toString())
+    list(): string[] {
+        return Object.values(this.e)
+    }
+
+    parse(s: S): T | undefined {
+        for (const [k, v] of Object.entries(this.e)) {
+            if (v === s) return k as unknown as T
         }
-        return words.join(" ")
+        return undefined
+    }
+
+    parseOrThrow(s: S): T {
+        const found = this.parse(s)
+        if (!found) throw new Error(`unknown value: ${s}`)
+        return found
+    }
+}
+
+enum SqlKeyword { ACTION = "ACTION", ADD = "ADD", AFTER = "AFTER", ALL = "ALL", ALTER = "ALTER", ALWAYS = "ALWAYS", ANALYZE = "ANALYZE", AND = "AND", AS = "AS", ASC = "ASC", ATTACH = "ATTACH", AUTOINCREMENT = "AUTOINCREMENT", BEFORE = "BEFORE", BEGIN = "BEGIN", BETWEEN = "BETWEEN", BY = "BY", CASCADE = "CASCADE", CASE = "CASE", CAST = "CAST", CHECK = "CHECK", COLLATE = "COLLATE", COLUMN = "COLUMN", COMMIT = "COMMIT", CONFLICT = "CONFLICT", CONSTRAINT = "CONSTRAINT", CREATE = "CREATE", CROSS = "CROSS", CURRENT = "CURRENT", CURRENT_DATE = "CURRENT_DATE", CURRENT_TIME = "CURRENT_TIME", CURRENT_TIMESTAMP = "CURRENT_TIMESTAMP", DATABASE = "DATABASE", DEFAULT = "DEFAULT", DEFERRABLE = "DEFERRABLE", DEFERRED = "DEFERRED", DELETE = "DELETE", DESC = "DESC", DETACH = "DETACH", DISTINCT = "DISTINCT", DO = "DO", DROP = "DROP", EACH = "EACH", ELSE = "ELSE", END = "END", ESCAPE = "ESCAPE", EXCEPT = "EXCEPT", EXCLUDE = "EXCLUDE", EXCLUSIVE = "EXCLUSIVE", EXISTS = "EXISTS", EXPLAIN = "EXPLAIN", FAIL = "FAIL", FILTER = "FILTER", FIRST = "FIRST", FOLLOWING = "FOLLOWING", FOR = "FOR", FOREIGN = "FOREIGN", FROM = "FROM", FULL = "FULL", GENERATED = "GENERATED", GLOB = "GLOB", GROUP = "GROUP", GROUPS = "GROUPS", HAVING = "HAVING", IF = "IF", IGNORE = "IGNORE", IMMEDIATE = "IMMEDIATE", IN = "IN", INDEX = "INDEX", INDEXED = "INDEXED", INITIALLY = "INITIALLY", INNER = "INNER", INSERT = "INSERT", INSTEAD = "INSTEAD", INTERSECT = "INTERSECT", INTO = "INTO", IS = "IS", ISNULL = "ISNULL", JOIN = "JOIN", KEY = "KEY", LAST = "LAST", LEFT = "LEFT", LIKE = "LIKE", LIMIT = "LIMIT", MATCH = "MATCH", MATERIALIZED = "MATERIALIZED", NATURAL = "NATURAL", NO = "NO", NOT = "NOT", NOTHING = "NOTHING", NOTNULL = "NOTNULL", NULL = "NULL", NULLS = "NULLS", OF = "OF", OFFSET = "OFFSET", ON = "ON", OR = "OR", ORDER = "ORDER", OTHERS = "OTHERS", OUTER = "OUTER", OVER = "OVER", PARTITION = "PARTITION", PLAN = "PLAN", PRAGMA = "PRAGMA", PRECEDING = "PRECEDING", PRIMARY = "PRIMARY", QUERY = "QUERY", RAISE = "RAISE", RANGE = "RANGE", RECURSIVE = "RECURSIVE", REFERENCES = "REFERENCES", REGEXP = "REGEXP", REINDEX = "REINDEX", RELEASE = "RELEASE", RENAME = "RENAME", REPLACE = "REPLACE", RESTRICT = "RESTRICT", RETURNING = "RETURNING", RIGHT = "RIGHT", ROLLBACK = "ROLLBACK", ROW = "ROW", ROWS = "ROWS", SAVEPOINT = "SAVEPOINT", SELECT = "SELECT", SET = "SET", TABLE = "TABLE", TEMP = "TEMP", TEMPORARY = "TEMPORARY", THEN = "THEN", TIES = "TIES", TO = "TO", TRANSACTION = "TRANSACTION", TRIGGER = "TRIGGER", UNBOUNDED = "UNBOUNDED", UNION = "UNION", UNIQUE = "UNIQUE", UPDATE = "UPDATE", USING = "USING", VACUUM = "VACUUM", VALUES = "VALUES", VIEW = "VIEW", VIRTUAL = "VIRTUAL", WHEN = "WHEN", WHERE = "WHERE", WINDOW = "WINDOW", WITH = "WITH", WITHOUT = "WITHOUT", }
+const SqlKeyWords = new EnumHelper(SqlKeyword)
+
+enum SqlOperator { Eq = "=", Ne = "<>", AND = 'AND', OR = 'OR', IS = 'IS', BETWEEN = 'BETWEEN', IN = 'IN', LIKE = 'LIKE', NOT = 'NOT', }
+const SqlOperators = new EnumHelper(SqlOperator)
+
+class SqlDdl {
+    emitters: Emitter[] = []
+
+    private emit(fn: () => string): SqlDdl {
+        this.emitters.push(new class extends Emitter {
+            emit(): string { return fn() }
+        })
+        return this
+    }
+
+    select(...vs: (SqlTable | SqlColumn)[]): SqlDdl {
+        this.emit(() => { return SqlKeyword.SELECT })
+
+        const selects = vs.map(v => {
+            if (v instanceof SqlTable)
+                v.columns.forEach(c => this.emit(() => c.escapedQualifiedName()))
+            if (v instanceof SqlColumn)
+                this.emit(() => v.escapedQualifiedName())
+        })
+
+        return this
     }
 }

@@ -10,41 +10,41 @@ test("SQLGenerator", () => {
 
     const personName = database.table('person_name')
     personName.createPrimaryKey()
-    personName.column('first_name', 'TEXT', { index: true, array: true })
-    personName.column('middle_name', 'TEXT', { index: true, array: true })
-    personName.column('last_name', 'TEXT', { index: true, array: true })
+    personName.column('first_name', 'TEXT', { indexed: true })
+    personName.column('middle_name', 'TEXT', { indexed: true })
+    personName.column('last_name', 'TEXT', { indexed: true })
 
     const email = database.table('email');
     email.createPrimaryKey()
-    email.column('address', 'TEXT', { index: true })
-    database.manyToMany(personName, email)
+    email.column('address', 'TEXT', { indexed: true })
+    database.manyToManyBytable(personName, email)
 
     const phone = database.table('phone');
     phone.createPrimaryKey()
-    phone.column('number', 'TEXT', { index: true })
-    database.manyToMany(personName, phone)
+    phone.column('number', 'TEXT', { indexed: true })
+    database.manyToManyBytable(personName, phone)
 
     const mailingAddress = database.table('mailing_address');
     mailingAddress.createPrimaryKey()
-    mailingAddress.column('address', 'TEXT', { index: true, array: true })
+    mailingAddress.column('address', 'TEXT', { indexed: true })
     mailingAddress.column('zip_code', 'TEXT')
-    database.manyToMany(personName, mailingAddress)
+    database.manyToManyBytable(personName, mailingAddress)
 
     const label = database.table('label');
     label.createPrimaryKey()
-    label.column('name', 'TEXT', { index: true })
+    label.column('name', 'TEXT', { indexed: true })
 
     const labelGroup = database.table('label_group');
     labelGroup.createPrimaryKey()
-    labelGroup.column('name', 'TEXT', { index: true })
+    labelGroup.column('name', 'TEXT', { indexed: true })
 
-    database.manyToMany(labelGroup, label)
+    database.manyToManyBytable(labelGroup, label)
 
-    database.oneToOne(person, personName)
-    database.manyToMany(personName, label)
-    database.manyToMany(phone, label)
-    database.manyToMany(email, label)
-    database.manyToMany(mailingAddress, label)
+    database.oneToOneByTable(person, personName)
+    database.manyToManyBytable(personName, label)
+    database.manyToManyBytable(phone, label)
+    database.manyToManyBytable(email, label)
+    database.manyToManyBytable(mailingAddress, label)
 
     const databaseEmit = database.emit()
     console.log(databaseEmit)

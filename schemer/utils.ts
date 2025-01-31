@@ -34,6 +34,11 @@ const utils = {
     },
     type: {
         isDefined: (t: any): boolean => t !== 'undefined' && t !== 'null'
+    },
+    array: {
+        append<T>(a?: T[], ...b: T[]): T[] {
+            return [...(a || []), ...b]
+        }
     }
 }
 
