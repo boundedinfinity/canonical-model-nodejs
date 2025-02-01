@@ -2,8 +2,7 @@ import npath from 'node:path'
 import { writeFileSync } from 'node:fs'
 import type { KindSchema } from './kind'
 import utils from './utils'
-import prettier from "@prettier/sync";
-import type { getAsset } from 'node:sea';
+import { tsHelper, type TsgBuiltInType } from './ts-helper'
 
 const config = {
     tabWidth: 4,
@@ -92,108 +91,6 @@ function addOrThrow<T extends { name: string }>(name: string, currents: T[], ...
             throw new Error(`${name} ${item.name} already exists`)
         currents.push(item)
     })
-}
-
-// https://www.qualdesk.com/blog/2021/type-guard-for-string-union-types-typescript/
-// copilot:  "create a type guard for string union types in TypeScript for the following values ..."
-const TsgBuiltInTypeList = ['string', 'number', 'boolean', 'object', 'any', 'void', 'null', 'undefined'] as const;
-export type TsgBuiltInType = typeof TsgBuiltInTypeList[number];
-
-const TsgProperyModifierList = ['private', 'readonly', 'static'] as const;
-export type TsgProperyModifier = typeof TsgProperyModifierList[number];
-
-const TsgVariableModifierList = ['export', 'default', 'const', 'let', 'variadic'] as const;
-export type TsgVariableModifier = typeof TsgVariableModifierList[number];
-
-export const tsutils = {
-    isBuiltInType: (value: string): value is TsgBuiltInType => {
-        return TsgBuiltInTypeList.includes(value as TsgBuiltInType)
-    },
-    isProperyModifier: (value: string): value is TsgProperyModifier => {
-        return TsgProperyModifierList.includes(value as TsgProperyModifier)
-    },
-    isVariableModifier: (value: string): value is TsgVariableModifier => {
-        return TsgVariableModifierList.includes(value as TsgVariableModifier)
-    },
-    defaultValue: (kind: KindSchema): string => {
-        let value: string = 'undefined'
-        switch (kind.kind) {
-            case 'object':
-                value = 'null'
-                break
-            case 'string':
-                value = `'-'`
-                break
-            case 'bool':
-                value = 'false'
-                break
-            case 'float':
-            case 'int':
-                value = '0'
-                break
-            case 'enum':
-                // TODO
-                break
-            case 'array':
-                value = '[]'
-                break
-            case 'ref':
-                return tsutils.defaultValue(kind.ref)
-                break
-        }
-
-        return value
-    },
-    type: (kind: KindSchema): TsgBuiltInType => {
-        switch (kind.kind) {
-            case 'object':
-                return 'object'
-            case 'string':
-                return 'string'
-            case 'bool':
-                return 'boolean'
-            case 'float':
-            case 'int':
-                return 'number'
-            case 'enum':
-                // TODO
-                return 'string'
-            case 'array':
-                return tsutils.type(kind.items)
-            case 'ref':
-                return tsutils.type(kind.ref)
-        }
-    },
-    name: (
-        typ: 'ts-class' | 'ts-property' | 'file' | 'ts-module-specifier'
-            | 'zod-schema' | 'zod-property' | 'ts-variable',
-        input: string
-    ): string => {
-        let name: string
-
-        switch (typ) {
-            case 'ts-class':
-                name = utils.string.phrase2Pascal(input)
-                break
-            case 'ts-variable':
-            case 'ts-property':
-                name = utils.string.phrase2Camel(input)
-                break
-            case 'zod-schema':
-                name = tsutils.name('ts-class', input) + 'Zod'
-                break
-            case 'zod-property':
-                name = utils.string.phrase2Camel(input)
-                break
-            case 'file':
-                name = './' + utils.string.phrase2Kebab(input) + '.ts'
-                break
-            default:
-                throw new Error(`unknown type ${typ}`)
-        }
-
-        return name
-    }
 }
 
 export type TsgPropertyType = TsgClass | TsgBuiltInType

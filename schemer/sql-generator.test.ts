@@ -5,36 +5,36 @@ test("SQLGenerator", () => {
     const generator = new SqlGenerator()
     const database = generator.database('canonical')
 
-    const person = database.table('person')
+    const person = database.addTable('person')
     person.createPrimaryKey()
 
-    const personName = database.table('person_name')
+    const personName = database.addTable('person_name')
     personName.createPrimaryKey()
     personName.column('first_name', 'TEXT', { indexed: true })
     personName.column('middle_name', 'TEXT', { indexed: true })
     personName.column('last_name', 'TEXT', { indexed: true })
 
-    const email = database.table('email');
+    const email = database.addTable('email');
     email.createPrimaryKey()
     email.column('address', 'TEXT', { indexed: true })
     database.manyToManyBytable(personName, email)
 
-    const phone = database.table('phone');
+    const phone = database.addTable('phone');
     phone.createPrimaryKey()
     phone.column('number', 'TEXT', { indexed: true })
     database.manyToManyBytable(personName, phone)
 
-    const mailingAddress = database.table('mailing_address');
+    const mailingAddress = database.addTable('mailing_address');
     mailingAddress.createPrimaryKey()
     mailingAddress.column('address', 'TEXT', { indexed: true })
     mailingAddress.column('zip_code', 'TEXT')
     database.manyToManyBytable(personName, mailingAddress)
 
-    const label = database.table('label');
+    const label = database.addTable('label');
     label.createPrimaryKey()
     label.column('name', 'TEXT', { indexed: true })
 
-    const labelGroup = database.table('label_group');
+    const labelGroup = database.addTable('label_group');
     labelGroup.createPrimaryKey()
     labelGroup.column('name', 'TEXT', { indexed: true })
 

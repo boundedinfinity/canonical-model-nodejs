@@ -1,3 +1,4 @@
+import { is } from "drizzle-orm"
 import { foreignKey } from "drizzle-orm/mysql-core"
 
 const config = {
@@ -36,12 +37,70 @@ abstract class Emitter {
 // SQL Generator
 // ////////////////////////////////////////////////////////////////////////////
 
+export const sqlUtil = {
+    defaults: {
+        joinSep: '__join__',
+        arraySep: '__array__',
+    },
+
+    is: {
+        pragma: (value: string): value is SqlPragma => {
+            return SqlPragmaList.includes(value as SqlPragma)
+        },
+        columnType: (value: string): value is SqlColumnType => {
+            return SqlColumnTypeList.includes(value as SqlColumnType)
+        },
+        columnOnConflictType: (value: string): value is SqlColumnOnConflictType => {
+            return SqlColumnOnConflictTypeList.includes(value as SqlColumnOnConflictType)
+        },
+        columnCollatingType: (value: string): value is SqlColumnCollatingType => {
+            return SqlColumnCollatingTypeList.includes(value as SqlColumnCollatingType)
+        },
+        columnDefaultBuiltIn: (value: string): value is SqlColumnDefaultBuiltInType => {
+            return SqlColumnDefaultBuiltInList.includes(value as SqlColumnDefaultBuiltInType)
+        },
+        columnDirection: (value: string): value is SqlColumnDirection => {
+            return SqlColumnDirectionList.includes(value as SqlColumnDirection)
+        },
+        foreignKeyClauseOnType: (value: string): value is SqlForeignKeyClauseOnType => {
+            return SqlForeignKeyClauseOnList.includes(value as SqlForeignKeyClauseOnType)
+        },
+        joinTable: (table: SqlTable): boolean => {
+            return table.name.includes(sqlUtil.defaults.joinSep)
+        },
+        arrayTable: (table: SqlTable): boolean => {
+            return table.name.includes(sqlUtil.defaults.arraySep)
+        }
+    },
+
+    name: {
+        foreignKey: (column: SqlColumn): string => {
+            const name = `${column.table.name}_${column.name}`
+            return name
+        },
+        joinTable: (c1: string | SqlColumn, c2: string | SqlColumn): string => {
+            const n1 = typeof c1 === 'string' ? c1 : c1.table.name
+            const n2 = typeof c2 === 'string' ? c2 : c2.table.name
+            const name = n1 + sqlUtil.defaults.joinSep + n2
+            return name
+        },
+        arrayTable: (c1: string | SqlColumn, c2: string | SqlColumn): string => {
+            const n1 = typeof c1 === 'string' ? c1 : c1.table.name
+            const n2 = typeof c2 === 'string' ? c2 : c2.table.name
+            const name = n1 + sqlUtil.defaults.arraySep + n2
+            return name
+        },
+    },
+}
+
 export type SqlGeneratorOptions = {
-    array_suffix: string
+    arraySep: string
+    joinSep: string
 }
 
 const defaultOptions: SqlGeneratorOptions = {
-    array_suffix: '__array'
+    arraySep: '__array',
+    joinSep: '__join__',
 }
 
 export class SqlGenerator {
@@ -54,7 +113,7 @@ export class SqlGenerator {
 
     validate() {
         this.databases.forEach(d => {
-            d.tables.filter(t => !t.name.endsWith(this.options.array_suffix)).forEach(t => {
+            d.tables.filter(t => !t.name.includes(this.options.arraySep)).forEach(t => {
                 if (!t.columns.some(c => c.isPrimaryKey()))
                     throw new Error(`table ${t.name} has no primary key`)
 
@@ -101,7 +160,7 @@ export class SqlDatabase {
         this.options = { ...this.options, ...options }
     }
 
-    table(name: string, options?: SqlTableOptions): SqlTable {
+    addTable(name: string, options?: SqlTableOptions): SqlTable {
         const table = new SqlTable(this, name, options)
         this.tables.push(table)
         return table
@@ -123,7 +182,7 @@ export class SqlDatabase {
         this.options.pragmas.push(name)
     }
 
-    index(column: SqlColumn, options?: SqlIndexOptions): SqlIndex {
+    addIndex(column: SqlColumn, options?: SqlIndexOptions): SqlIndex {
         const index = new SqlIndex(column, options)
         this.indexes.push(index)
         return index
@@ -174,7 +233,7 @@ export class SqlDatabase {
         const fk0 = t0.getPrimaryKeyOrThrow()
         const fk1 = t1.getPrimaryKeyOrThrow()
 
-        const table = this.table(sqlUtil.joinTableName(fk0, fk1))
+        const table = this.addTable(sqlUtil.name.joinTable(fk0, fk1))
         const pk0 = table.column(fk0.foreignKeyName(), fk0.type, { primary: true })
         const pk1 = table.column(fk1.foreignKeyName(), fk1.type, { primary: true })
 
@@ -185,7 +244,7 @@ export class SqlDatabase {
     }
 
     manyToMany(col0: SqlColumn, col1: SqlColumn): SqlTable {
-        const table = this.table(sqlUtil.joinTableName(col0, col1))
+        const table = this.addTable(sqlUtil.name.joinTable(col0, col1))
         const pk0 = table.column(col0.foreignKeyName(), col0.type, { primary: true })
         const pk1 = table.column(col1.foreignKeyName(), col1.type, { primary: true })
 
@@ -534,7 +593,7 @@ export class SqlColumn {
     }
 
     foreignKeyName(): string {
-        return sqlUtil.foreignKeyName(this)
+        return sqlUtil.name.foreignKey(this)
     }
 
     qualifiedName(): string {
@@ -655,41 +714,7 @@ export class SqlIndex {
 const SqlPragmaList = ["analysis_limit", "application_id", "auto_vacuum", "automatic_index", "busy_timeout", "cache_size", "cache_spill", "case_sensitive_like", "cell_size_check", "checkpoint_fullfsync", "collation_list", "compile_options", "count_changes", "data_store_directory", "data_version", "database_list", "default_cache_size", "defer_foreign_keys", "empty_result_callbacks", "encoding", "foreign_key_check", "foreign_key_list", "foreign_keys", "freelist_count", "full_column_names", "fullfsync", "function_list", "hard_heap_limit", "ignore_check_constraints", "incremental_vacuum", "index_info", "index_list", "index_xinfo", "integrity_check", "journal_mode", "journal_size_limit", "legacy_alter_table", "legacy_file_format", "locking_mode", "max_page_count", "mmap_size", "module_list", "optimize", "page_count", "page_size", "parser_trace", "pragma_list", "query_only", "quick_check", "read_uncommitted", "recursive_triggers", "reverse_unordered_selects", "schema_version³", "secure_delete", "short_column_names", "shrink_memory", "soft_heap_limit", "stats³", "synchronous", "table_info", "table_list", "table_xinfo", "temp_store", "temp_store_directory", "threads", "trusted_schema", "user_version", "vdbe_addoptrace", "vdbe_debug", "vdbe_listing", "vdbe_trace", "wal_autocheckpoint"] as const;
 export type SqlPragma = typeof SqlPragmaList[number];
 
-export const sqlUtil = {
-    is: {
-        pragma: (value: string): value is SqlPragma => {
-            return SqlPragmaList.includes(value as SqlPragma)
-        },
-        columnType: (value: string): value is SqlColumnType => {
-            return SqlColumnTypeList.includes(value as SqlColumnType)
-        },
-        columnOnConflictType: (value: string): value is SqlColumnOnConflictType => {
-            return SqlColumnOnConflictTypeList.includes(value as SqlColumnOnConflictType)
-        },
-        columnCollatingType: (value: string): value is SqlColumnCollatingType => {
-            return SqlColumnCollatingTypeList.includes(value as SqlColumnCollatingType)
-        },
-        columnDefaultBuiltIn: (value: string): value is SqlColumnDefaultBuiltInType => {
-            return SqlColumnDefaultBuiltInList.includes(value as SqlColumnDefaultBuiltInType)
-        },
-        columnDirection: (value: string): value is SqlColumnDirection => {
-            return SqlColumnDirectionList.includes(value as SqlColumnDirection)
-        },
-        foreignKeyClauseOnType: (value: string): value is SqlForeignKeyClauseOnType => {
-            return SqlForeignKeyClauseOnList.includes(value as SqlForeignKeyClauseOnType)
-        },
 
-    },
-
-    foreignKeyName: (column: SqlColumn): string => {
-        const name = `${column.table.name}_${column.name}`
-        return name
-    },
-    joinTableName: (c1: SqlColumn, c2: SqlColumn): string => {
-        const name = `${c1.table.name}__${c2.table.name}`
-        return name
-    }
-}
 
 // ////////////////////////////////////////////////////////////////////////////
 // SQL Select
@@ -750,6 +775,10 @@ export class SqlSelect {
     between(): SqlSelect { return this.op(SqlOperator.BETWEEN) }
     isNot(): SqlSelect { this.op(SqlOperator.IS); return this.op(SqlOperator.NOT) }
     semicolon(): SqlSelect { return this.push(() => ';') }
+    inner(): SqlSelect { return this.push(() => SqlKeyword.INNER) }
+    join(): SqlSelect { return this.push(() => SqlKeyword.JOIN) }
+    table(t: SqlTable): SqlSelect { return this.push(() => t.escapedName()) }
+    on(): SqlSelect { return this.push(() => SqlKeyword.ON) }
 
     emit(): string {
         const words: string[] = []

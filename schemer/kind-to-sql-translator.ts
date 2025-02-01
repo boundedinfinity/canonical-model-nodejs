@@ -2,54 +2,82 @@ import { KindUtils, KindRegistry } from './kind'
 import type { KindSchema, ObjectSchema } from './kind'
 import {
     SqlGenerator, SqlSelect, SqlDatabase, SqlTable,
-    SqlColumnTextMax, SqlColumnTextMin, SqlColumnNumberMin, SqlColumnNumberMax
+    SqlColumnTextMax, SqlColumnTextMin, SqlColumnNumberMin, SqlColumnNumberMax,
+    sqlUtil
 } from "./sql-generator";
 import type { SqlColumn, SqlColumnOptions, SqlGeneratorOptions } from './sql-generator'
 import utils from './utils'
+import { tsHelper } from './ts-helper'
+
+type HelperOptions = {
+    arraySep: string
+    joinSep: string
+}
+
+class Helper {
+    options: HelperOptions = {
+        arraySep: sqlUtil.defaults.arraySep,
+        joinSep: sqlUtil.defaults.joinSep
+    }
+
+    constructor(options?: Partial<HelperOptions>) {
+        this.options = { ...this.options, ...options }
+    }
+
+    dbname(kind: KindSchema): string {
+        if (kind.persist?.name) return kind.persist.name
+        const kindName = KindUtils.resolveName(kind)
+        const name = utils.string.phrase2Snake(kindName)
+        return name
+    }
+
+    arrayTableName(obj: KindSchema, prop: KindSchema): string {
+        const parentname = this.dbname(obj)
+        const colname = this.dbname(prop)
+        const name = sqlUtil.name.arrayTable(parentname, colname)
+        return name
+    }
+
+    getKindTableFn(database: SqlDatabase): (kind: KindSchema) => SqlTable {
+        return (kind: KindSchema): SqlTable => {
+            const name = this.dbname(kind)
+            const table = database.getTableOrThrow(name)
+            return table
+        }
+    }
+}
 
 export type KindToSqlTranslatorOptions = {
     name: string
 } & SqlGeneratorOptions
 
-const dbname = (kind: KindSchema) => {
-    if (kind.persist?.name) return kind.persist.name
-    const kindName = KindUtils.getKindName(kind)
-    const name = utils.string.phrase2Snake(kindName)
-    return name
-}
-
-const getKindTableFn = (database: SqlDatabase): (kind: KindSchema) => SqlTable => {
-    return function (kind: KindSchema): SqlTable {
-        const name = dbname(kind)
-        const table = database.getTableOrThrow(name)
-        return table
-    }
-}
-
 export class KindToSqlDdlTranslator {
+    h: Helper
     generator: SqlGenerator
     registry: KindRegistry
     options: KindToSqlTranslatorOptions = {
         name: 'schemer',
-        array_suffix: '__array'
+        arraySep: sqlUtil.defaults.arraySep,
+        joinSep: sqlUtil.defaults.joinSep
     }
 
     constructor(registry: KindRegistry, generator: SqlGenerator, options?: Partial<KindToSqlTranslatorOptions>) {
         this.generator = generator
         this.registry = registry
         this.options = { ...this.options, ...options }
+        this.h = new Helper(this.options)
     }
 
     // https://www.sqlite.org/datatype3.html
     process() {
         const database = this.generator.database('schemer')
-        const getKindTable = getKindTableFn(database)
+        const getKindTable = this.h.getKindTableFn(database)
 
         const round1 = (kind: KindSchema) => {
-            const tableName = dbname(kind)
+            const tableName = this.h.dbname(kind)
             switch (kind.kind) {
                 case 'object':
-                    const table = database.table(tableName)
+                    const table = database.addTable(tableName)
                     table.createPrimaryKey()
                     break
                 case 'string':
@@ -69,20 +97,20 @@ export class KindToSqlDdlTranslator {
             switch (prop.kind) {
                 case 'string':
                     {
-                        column = column ?? table.column(dbname(prop))
+                        column = column ?? table.column(this.h.dbname(prop))
                         column.type = 'TEXT'
-                        if (prop.searchable || prop.persist?.indexed) database.index(column)
+                        if (prop.searchable || prop.persist?.indexed) database.addIndex(column)
                         if (prop.min) table.addCheck(new SqlColumnTextMin(column, prop.min))
                         if (prop.max) table.addCheck(new SqlColumnTextMax(column, prop.max))
                     }
                     break
                 case 'bool':
-                    column = column ?? table.column(dbname(prop))
+                    column = column ?? table.column(this.h.dbname(prop))
                     column.type = 'INTEGER'
                     break
                 case 'int':
                     {
-                        column = column ?? table.column(dbname(prop))
+                        column = column ?? table.column(this.h.dbname(prop))
                         column.type = 'INTEGER'
                         if (prop.min) table.addCheck(new SqlColumnNumberMin(column, prop.min))
                         if (prop.max) table.addCheck(new SqlColumnNumberMax(column, prop.max))
@@ -90,7 +118,7 @@ export class KindToSqlDdlTranslator {
                     break
                 case 'float':
                     {
-                        column = column ?? table.column(dbname(prop))
+                        column = column ?? table.column(this.h.dbname(prop))
                         column.type = 'REAL'
                         if (prop.min) table.addCheck(new SqlColumnNumberMin(column, prop.min))
                         if (prop.max) table.addCheck(new SqlColumnNumberMax(column, prop.max))
@@ -107,9 +135,9 @@ export class KindToSqlDdlTranslator {
                 case 'array':
                     {
                         if (this.registry.isPrimitive(prop)) {
-                            const arrayTable = database.table(dbname(obj) + '__' + dbname(prop) + this.options.array_suffix)
+                            const arrayTable = database.addTable(this.h.arrayTableName(obj, prop))
                             arrayTable.column('index', 'INTEGER', { ordered: 'ASC' })
-                            column = arrayTable.column(dbname(prop))
+                            column = arrayTable.column(this.h.dbname(prop))
                             database.oneToManyByTable(getKindTable(obj), arrayTable)
                             round2(obj, prop.items, column)
                         } else {
@@ -139,30 +167,30 @@ export type KindToSqlQueryTranslatorOptions = {
 } & SqlGeneratorOptions
 
 export class KindToSqlQueryTranslator {
+    h: Helper
     generator: SqlGenerator
     registry: KindRegistry
     options: KindToSqlQueryTranslatorOptions = {
         placeholder: '?',
-        array_suffix: '__array'
+        arraySep: sqlUtil.defaults.arraySep,
+        joinSep: sqlUtil.defaults.joinSep
     }
 
     constructor(registry: KindRegistry, generator: SqlGenerator, options?: Partial<KindToSqlQueryTranslatorOptions>) {
         this.generator = generator
         this.registry = registry
         this.options = { ...this.options, ...options }
+        this.h = new Helper(this.options)
     }
 
     // https://www.sqlite.org/datatype3.html
     process(): { [name: string]: string } {
         const database = this.generator.databases[0]
-        const getKindTable = getKindTableFn(database)
+        const getKindTable = this.h.getKindTableFn(database)
         const queries = new Map<string, SqlSelect>()
 
-        const queryName = (prefix: string, column: SqlColumn) => {
-            let name: string = column.name
-            name = utils.string.upperFirst(name)
-            name = prefix + name
-            name = column.table.name + '.' + name
+        const queryName = (prefix: string, obj: string | KindSchema, prop: string | KindSchema) => {
+            let name = prefix + tsHelper.name.ts.class(obj) + tsHelper.name.ts.class(prop)
             return name
         }
 
@@ -172,7 +200,7 @@ export class KindToSqlQueryTranslator {
                     {
                         const table = getKindTable(obj)
                         const pk = table.getPrimaryKeyOrThrow()
-                        const name = queryName('by', pk)
+                        const name = queryName('by', obj, "Id")
                         const query = new SqlSelect(this.options).select(table).where().column(pk).eq().placeholder()
                         queries.set(name, query)
                         obj.properties.forEach((prop) => round2(obj, prop))
@@ -190,8 +218,9 @@ export class KindToSqlQueryTranslator {
         }
 
         const round2 = (obj: KindSchema, prop: KindSchema, name?: string) => {
-            name = name ?? dbname(prop)
+            if (!prop.searchable) return
 
+            name = name ?? this.h.dbname(prop)
             switch (prop.kind) {
                 case 'object':
                     {
@@ -203,24 +232,32 @@ export class KindToSqlQueryTranslator {
                 case 'int':
                 case 'float':
                     {
-                        if (prop.searchable || prop.persist?.indexed) {
-                            const table = getKindTable(obj)
-                            const column = table.getColumnOrThrow(name)
-                            const qname = queryName('by', column)
-
-                            const query = new SqlSelect(this.options)
-                                .select(table)
-                                .where()
-                                .column(column)
-                                .eq()
-                                .placeholder()
-
-                            queries.set(qname, query)
-                        }
+                        const table = getKindTable(obj)
+                        const column = table.getColumnOrThrow(name)
+                        const qname = queryName('by', obj, prop)
+                        const query = new SqlSelect(this.options)
+                            .select(table)
+                            .where().column(column).eq().placeholder()
+                        queries.set(qname, query)
                     }
                     break
                 case 'array':
-                    round2(obj, prop.items, name)
+                    if (this.registry.isPrimitive(prop)) {
+                        const parentKey = getKindTable(obj).getPrimaryKeyOrThrow()
+                        const arrayTableName = this.h.arrayTableName(obj, prop)
+                        const arrayTable = database.getTableOrThrow(arrayTableName)
+                        const arrayKey = arrayTable.getColumnOrThrow(parentKey.foreignKeyName())
+
+                        const qname = queryName('by', obj, prop)
+                        const query = new SqlSelect(this.options)
+                            .select(arrayTable)
+                            .join().column(parentKey).eq().column(arrayKey)
+                            .where().column(arrayKey).eq().placeholder()
+                        queries.set(qname, query)
+
+                    } else {
+                        const pk = getKindTable(obj).getPrimaryKeyOrThrow()
+                    }
                     break
                 case 'ref':
                     round2(obj, prop.ref, name)

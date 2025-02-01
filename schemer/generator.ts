@@ -5,9 +5,8 @@ import type { ProjectSchema, KindSchema, ObjectSchema } from './kind'
 import { KindUtils, KindRegistry } from './kind'
 import { SqlGenerator } from './sql-generator'
 import { KindToSqlDdlTranslator, KindToSqlQueryTranslator } from './kind-to-sql-translator'
-import { stat } from 'node:fs'
+import { tsHelper } from './ts-helper'
 import {
-    tsutils,
     TsgLanguageGenerator, TsgFile, TsgClass, TsgProperty,
     TsgConstructor, TsgAssignement, TsgFluidFunction,
     TypeScriptFuntionCall, TsgObjectLiteral, TsgObjectLiteralProperty,
@@ -29,7 +28,7 @@ export class Generator {
     }
 
     private processTopLevelKinds(kind: KindSchema) {
-        const filename = tsutils.name('file', KindUtils.getKindName(kind))
+        const filename = tsHelper.name.ts.file(KindUtils.resolveName(kind))
         const file = this.tsProject.getFile(filename)
 
         switch (kind.kind) {
@@ -43,11 +42,11 @@ export class Generator {
     private processZodSchema(file: TsgFile, kind: ObjectSchema) {
         const process = (current: KindSchema, currentName?: string) => {
             if (!currentName)
-                currentName = tsutils.name('ts-variable', KindUtils.getKindName(current))
+                currentName = tsHelper.name.ts.variable(KindUtils.resolveName(current))
 
             switch (current.kind) {
                 case 'object':
-                    const propName = tsutils.name('zod-schema', KindUtils.getKindName(current))
+                    const propName = tsHelper.name.zod.schema(KindUtils.resolveName(current))
                     const propFile = this.tsProject.findFile(propName)
 
                     if (propFile) {
@@ -108,7 +107,7 @@ export class Generator {
             }
         }
 
-        const zodName = tsutils.name('zod-schema', KindUtils.getKindName(kind))
+        const zodName = tsHelper.name.zod.schema(KindUtils.resolveName(kind))
         const properties: TsgObjectLiteralProperty[] = []
         kind.properties.forEach(property => process(property))
 
@@ -129,7 +128,7 @@ export class Generator {
     private processTypescriptClass(file: TsgFile, classKind: ObjectSchema) {
         const process = (propKind: KindSchema, prop?: TsgProperty) => {
             if (!prop) {
-                const propName = tsutils.name('ts-property', KindUtils.getKindName(propKind))
+                const propName = tsHelper.name.ts.property(KindUtils.resolveName(propKind))
                 prop = tsClass.getProperty(propName)
                 prop.modifiers.optional = propKind.optional
             }
@@ -137,7 +136,7 @@ export class Generator {
             switch (propKind.kind) {
                 case 'object':
                     if (this.registry.isRegistered(propKind)) {
-                        const otherName = tsutils.name('ts-class', KindUtils.getKindName(propKind))
+                        const otherName = tsHelper.name.ts.class(KindUtils.resolveName(propKind))
                         const otherClass = this.tsProject.getClass(otherName)
                         if (otherClass) {
                             prop.kind = otherClass
@@ -154,7 +153,7 @@ export class Generator {
                 case 'array':
                     prop.modifiers.array = true
                     if (prop.isRequired())
-                        prop.modifiers.default = tsutils.defaultValue(propKind)
+                        prop.modifiers.default = tsHelper.defaults.kindValue(propKind)
                     process(propKind.items, prop)
                     break
                 case 'ref':
@@ -162,15 +161,15 @@ export class Generator {
                     break
                 case 'enum':
                     // TODO
-                    prop.kind = tsutils.type(propKind)
+                    prop.kind = tsHelper.type(propKind)
                     break
                 case 'string':
                 case 'bool':
                 case 'float':
                 case 'int':
-                    prop.kind = tsutils.type(propKind)
+                    prop.kind = tsHelper.type(propKind)
                     if (prop.isRequired() && !prop.modifiers.default)
-                        prop.modifiers.default = tsutils.defaultValue(propKind)
+                        prop.modifiers.default = tsHelper.defaults.kindValue(propKind)
 
                     if (prop.isRequired()) {
                         tsConstructor.addInput(TsgFunctionInputArg.fromProperty(prop))
@@ -183,8 +182,8 @@ export class Generator {
             }
         }
 
-        const classKindKind = KindUtils.getKindKind(classKind)
-        const tsClassName = tsutils.name('ts-class', classKindKind)
+        const classKindKind = KindUtils.resolveKind(classKind)
+        const tsClassName = tsHelper.name.ts.class(classKindKind)
 
         file.getImport('uuid').addNamedImport(
             { name: 'v4', alias: 'uuid' },
@@ -207,9 +206,9 @@ export class Generator {
         this.registry.validate()
 
         this.registry.registry.values().forEach(kind => {
-            const classKindKind = KindUtils.getKindKind(kind)
-            const filename = tsutils.name('file', classKindKind)
-            const tsClassName = tsutils.name('ts-class', classKindKind)
+            const classKindKind = KindUtils.resolveKind(kind)
+            const filename = tsHelper.name.ts.file(classKindKind)
+            const tsClassName = tsHelper.name.ts.class(classKindKind)
             const file = this.tsProject.getFile(filename)
             const klass = file.getClass(tsClassName)
             console.log(`class: ${klass.name}`)

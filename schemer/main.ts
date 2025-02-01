@@ -90,21 +90,21 @@ const personName: KindSchema = {
     kind: 'object',
     name: 'Person Name',
     properties: [
-        { kind: 'array', items: { kind: 'ref', name: 'prefixes', ref: personNamePrefix } },
-        { kind: 'array', name: 'firsts', items: personNameFragment },
-        { kind: 'array', name: 'middles', items: personNameFragment },
-        { kind: 'array', name: 'lasts', items: personNameFragment },
-        { kind: 'array', items: { kind: 'ref', name: 'suffixes', ref: personNameSuffix } },
-        { kind: 'ref', ref: personNameOrder, name: 'order' },
+        // { kind: 'array', items: { kind: 'ref', name: 'prefixes', ref: personNamePrefix } },
+        { kind: 'array', name: 'firsts', items: personNameFragment, searchable: true },
+        // { kind: 'array', name: 'middles', items: personNameFragment },
+        // { kind: 'array', name: 'lasts', items: personNameFragment },
+        // { kind: 'array', items: { kind: 'ref', name: 'suffixes', ref: personNameSuffix } },
+        // { kind: 'ref', ref: personNameOrder, name: 'order' },
     ]
 }
 
 const project: ProjectSchema = {
     kinds: [
         // testThing,
-        label,
-        labelGroup,
-        // personName, 
+        // label,
+        // labelGroup,
+        personName,
         // personNameHonorificType, 
         // personNameOrder, 
         // personNamePrefix

@@ -19,8 +19,8 @@ export class KindRegistry {
 
     register(...kinds: KindSchema[]): void {
         const register = (current: KindSchema) => {
-            const typ = KindUtils.getKindKind(current)
-            const name = KindUtils.getKindName(current)
+            const typ = KindUtils.resolveKind(current)
+            const name = KindUtils.resolveName(current)
 
             if (!this.registry.has(name)) {
                 console.log(`registering ${name}`)
@@ -37,24 +37,24 @@ export class KindRegistry {
         kinds.forEach(kind => register(kind))
     }
 
-    private check(nameOrKind: string | KindSchema): void {
-        const found = this.isRegistered(nameOrKind)
-        if (!found) {
-            let name: string
-            if (typeof nameOrKind === 'string')
-                name = nameOrKind
-            else
-                name = KindUtils.getKindName(nameOrKind)
-
-            throw new Error(`kind not found: ${name}`)
-        }
-    }
-
     validate() {
+        const check = (nameOrKind: string | KindSchema): void => {
+            const found = this.isRegistered(nameOrKind)
+            if (!found) {
+                let name: string
+                if (typeof nameOrKind === 'string')
+                    name = nameOrKind
+                else
+                    name = KindUtils.resolveName(nameOrKind)
+
+                throw new Error(`kind not found: ${name}`)
+            }
+        }
+
         const validate = (kind: KindSchema, parent?: KindSchema) => {
             switch (kind.kind) {
                 case 'object':
-                    this.check(kind)
+                    check(kind)
                     kind.properties.forEach(property => validate(property, kind))
                     break
                 case 'array':
@@ -79,7 +79,7 @@ export class KindRegistry {
         if (typeof nameOrKind === 'string')
             name = nameOrKind
         else
-            name = KindUtils.getKindName(nameOrKind)
+            name = KindUtils.resolveName(nameOrKind)
 
         return this.registry.has(name)
     }
@@ -97,7 +97,7 @@ export class KindRegistry {
     }
 
     isPrimitive(kind: KindSchema): boolean {
-        const resolved = KindUtils.getKindKind(kind)
+        const resolved = KindUtils.resolveKind(kind)
         return KindUtils.isPrimitive(resolved)
     }
 }
@@ -149,7 +149,7 @@ export const KindUtils = {
 
         return false
     },
-    getKindName: (kind: KindSchema): string => {
+    resolveName: (kind: KindSchema): string => {
         let name: string | undefined
 
         switch (kind.kind) {
@@ -162,10 +162,10 @@ export const KindUtils = {
                 name = kind.name
                 break
             case 'array':
-                name = kind.name || KindUtils.getKindName(kind.items)
+                name = kind.name || KindUtils.resolveName(kind.items)
                 break
             case 'ref':
-                name = kind.name || KindUtils.getKindName(kind.ref)
+                name = kind.name || KindUtils.resolveName(kind.ref)
                 break
         }
 
@@ -175,7 +175,7 @@ export const KindUtils = {
 
         return name!
     },
-    getKindKind: (kind: KindSchema): string => {
+    resolveKind: (kind: KindSchema): string => {
         let name: string | undefined
 
         switch (kind.kind) {
@@ -190,10 +190,10 @@ export const KindUtils = {
                 name = 'string'
                 break
             case 'ref':
-                name = KindUtils.getKindKind(kind.ref)
+                name = KindUtils.resolveKind(kind.ref)
                 break
             case 'array':
-                name = KindUtils.getKindKind(kind.items)
+                name = KindUtils.resolveKind(kind.items)
                 break
             case 'enum':
                 // TODO
