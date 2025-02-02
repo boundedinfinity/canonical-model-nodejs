@@ -91,9 +91,9 @@ const personName: KindSchema = {
     name: 'Person Name',
     properties: [
         // { kind: 'array', items: { kind: 'ref', name: 'prefixes', ref: personNamePrefix } },
-        { kind: 'array', name: 'firsts', items: personNameFragment, searchable: true },
-        // { kind: 'array', name: 'middles', items: personNameFragment },
-        // { kind: 'array', name: 'lasts', items: personNameFragment },
+        { kind: 'array', name: 'firsts', items: personNameFragment, searchable: ['name'] },
+        { kind: 'array', name: 'middles', items: personNameFragment, searchable: ['name'] },
+        { kind: 'array', name: 'lasts', items: personNameFragment, searchable: ['name'] },
         // { kind: 'array', items: { kind: 'ref', name: 'suffixes', ref: personNameSuffix } },
         // { kind: 'ref', ref: personNameOrder, name: 'order' },
     ]

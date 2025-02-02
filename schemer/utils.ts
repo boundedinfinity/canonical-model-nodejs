@@ -1,4 +1,39 @@
-const utils = {
+export type IdenterOpotions = {
+    level: number
+    char: string
+}
+
+export class Indenter {
+    options: IdenterOpotions = { level: 0, char: '    ' }
+
+    constructor(options?: Partial<IdenterOpotions>) {
+        this.options = { ...this.options, ...options }
+    }
+
+    indent(text: string): string {
+        let prefix = this.options.char.repeat(this.options.level)
+        return prefix + text
+    }
+
+    indentLines(lines: string[]): string[] {
+        return lines.map(l => this.indent(l))
+    }
+
+    inc() {
+        this.options.level++
+    }
+
+    dec() {
+        this.options.level--
+        if (this.options.level < 0) this.options.level = 0
+    }
+}
+
+export abstract class Emitter {
+    abstract emit(): string
+}
+
+export const utils = {
     string: {
         normal(s: string): string {
             return utils.string.singleSpace(s.trim())
@@ -42,4 +77,29 @@ const utils = {
     }
 }
 
-export default utils
+export class EnumHelper<T extends { [k: string]: string }, S extends string> {
+    private e: T
+
+    constructor(e: T) { this.e = e }
+
+    includes(s: S): boolean {
+        return typeof s === 'string' && Object.values(this.e).includes(s);
+    }
+
+    list(): string[] {
+        return Object.values(this.e)
+    }
+
+    parse(s: S): T | undefined {
+        for (const [k, v] of Object.entries(this.e)) {
+            if (v === s) return k as unknown as T
+        }
+        return undefined
+    }
+
+    parseOrThrow(s: S): T {
+        const found = this.parse(s)
+        if (!found) throw new Error(`unknown value: ${s}`)
+        return found
+    }
+}

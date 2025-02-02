@@ -3,7 +3,7 @@
 // https://orm.drizzle.team/docs/relations
 // https://www.totaltypescript.com/concepts/the-prettify-helper
 
-import utils from './utils'
+import { utils } from './utils'
 
 export type KindRegistryOptions = {
     failOnDuplicate?: boolean
@@ -223,7 +223,7 @@ type SharedSchema = {
     name?: string
     description?: string
     version?: string
-    searchable?: boolean
+    searchable?: boolean | string[]
     persist?: {
         name?: string
         indexed?: boolean

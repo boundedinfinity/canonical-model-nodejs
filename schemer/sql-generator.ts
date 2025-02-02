@@ -1,37 +1,12 @@
-import { is } from "drizzle-orm"
-import { foreignKey } from "drizzle-orm/mysql-core"
+import { Indenter, Emitter, EnumHelper } from './utils'
+
 
 const config = {
     newline: '\n',
     wrapName: (name: string) => '`' + name + '`',
 }
 
-class Indenter {
-    level: number = 0
-    char: string = '    '
 
-    indent(text: string): string {
-        let prefix = this.char.repeat(this.level)
-        return prefix + text
-    }
-
-    indentLines(lines: string[]): string[] {
-        return lines.map(l => this.indent(l))
-    }
-
-    inc() {
-        this.level++
-    }
-
-    dec() {
-        this.level--
-        if (this.level < 0) this.level = 0
-    }
-}
-
-abstract class Emitter {
-    abstract emit(): string
-}
 
 // ////////////////////////////////////////////////////////////////////////////
 // SQL Generator
@@ -41,6 +16,7 @@ export const sqlUtil = {
     defaults: {
         joinSep: '__join__',
         arraySep: '__array__',
+        arrayPositionColumn: 'position',
     },
 
     is: {
@@ -112,30 +88,13 @@ export class SqlGenerator {
     }
 
     validate() {
-        this.databases.forEach(d => {
-            d.tables.filter(t => !t.name.includes(this.options.arraySep)).forEach(t => {
-                if (!t.columns.some(c => c.isPrimaryKey()))
-                    throw new Error(`table ${t.name} has no primary key`)
-
-                t.columns.forEach(c => {
-                    if (c.type === undefined || c.type === null)
-                        throw new Error(`column ${c.qualifiedName()} has column with no type`)
-                })
-            })
-        })
+        this.databases.forEach(database => database.validate())
     }
 
     database(name: string, options?: SqlDatabaseOptions): SqlDatabase {
         const database = new SqlDatabase(this, name, options)
         this.databases.push(database)
         return database
-    }
-
-    emit(): string {
-        this.validate()
-        const lines: string[] = []
-        lines.push(...this.databases.map(d => d.emit()))
-        return lines.join(config.newline)
     }
 }
 
@@ -158,6 +117,18 @@ export class SqlDatabase {
         this.generator = generator
         this.name = name
         this.options = { ...this.options, ...options }
+    }
+
+    validate() {
+        this.tables.filter(t => !t.name.includes(sqlUtil.defaults.arraySep)).forEach(t => {
+            if (!t.columns.some(c => c.isPrimaryKey()))
+                throw new Error(`table ${t.name} has no primary key`)
+
+            t.columns.forEach(c => {
+                if (c.type === undefined || c.type === null)
+                    throw new Error(`column ${c.qualifiedName()} has column with no type`)
+            })
+        })
     }
 
     addTable(name: string, options?: SqlTableOptions): SqlTable {
@@ -200,6 +171,8 @@ export class SqlDatabase {
         if (this.indexes.length)
             lines.push(...this.indexes.map(i => i.emit()))
 
+        lines.push(';')
+
         return lines.join(config.newline)
     }
 
@@ -216,7 +189,7 @@ export class SqlDatabase {
 
     oneToManyByTable(t0: SqlTable, t1: SqlTable, options?: SqlForeignKeyOptions) {
         const fk0 = t0.getPrimaryKeyOrThrow()
-        const ref = t1.column(fk0.foreignKeyName(), fk0.type, { notNull: true })
+        const ref = t1.column(fk0.foreignKeyName(), fk0.type, { notNull: true, primary: true })
         ref.foreignKey(fk0, options)
     }
 
@@ -711,10 +684,25 @@ export class SqlIndex {
 // SQL Pragma
 // ////////////////////////////////////////////////////////////////////////////
 
-const SqlPragmaList = ["analysis_limit", "application_id", "auto_vacuum", "automatic_index", "busy_timeout", "cache_size", "cache_spill", "case_sensitive_like", "cell_size_check", "checkpoint_fullfsync", "collation_list", "compile_options", "count_changes", "data_store_directory", "data_version", "database_list", "default_cache_size", "defer_foreign_keys", "empty_result_callbacks", "encoding", "foreign_key_check", "foreign_key_list", "foreign_keys", "freelist_count", "full_column_names", "fullfsync", "function_list", "hard_heap_limit", "ignore_check_constraints", "incremental_vacuum", "index_info", "index_list", "index_xinfo", "integrity_check", "journal_mode", "journal_size_limit", "legacy_alter_table", "legacy_file_format", "locking_mode", "max_page_count", "mmap_size", "module_list", "optimize", "page_count", "page_size", "parser_trace", "pragma_list", "query_only", "quick_check", "read_uncommitted", "recursive_triggers", "reverse_unordered_selects", "schema_version³", "secure_delete", "short_column_names", "shrink_memory", "soft_heap_limit", "stats³", "synchronous", "table_info", "table_list", "table_xinfo", "temp_store", "temp_store_directory", "threads", "trusted_schema", "user_version", "vdbe_addoptrace", "vdbe_debug", "vdbe_listing", "vdbe_trace", "wal_autocheckpoint"] as const;
+const SqlPragmaList = [
+    "analysis_limit", "application_id", "auto_vacuum", "automatic_index", "busy_timeout",
+    "cache_size", "cache_spill", "case_sensitive_like", "cell_size_check",
+    "checkpoint_fullfsync", "collation_list", "compile_options", "count_changes",
+    "data_store_directory", "data_version", "database_list", "default_cache_size",
+    "defer_foreign_keys", "empty_result_callbacks", "encoding", "foreign_key_check",
+    "foreign_key_list", "foreign_keys", "freelist_count", "full_column_names",
+    "fullfsync", "function_list", "hard_heap_limit", "ignore_check_constraints",
+    "incremental_vacuum", "index_info", "index_list", "index_xinfo", "integrity_check",
+    "journal_mode", "journal_size_limit", "legacy_alter_table", "legacy_file_format",
+    "locking_mode", "max_page_count", "mmap_size", "module_list", "optimize",
+    "page_count", "page_size", "parser_trace", "pragma_list", "query_only", "quick_check",
+    "read_uncommitted", "recursive_triggers", "reverse_unordered_selects",
+    "schema_version³", "secure_delete", "short_column_names", "shrink_memory",
+    "soft_heap_limit", "stats³", "synchronous", "table_info", "table_list", "table_xinfo",
+    "temp_store", "temp_store_directory", "threads", "trusted_schema", "user_version",
+    "vdbe_addoptrace", "vdbe_debug", "vdbe_listing", "vdbe_trace", "wal_autocheckpoint"
+] as const;
 export type SqlPragma = typeof SqlPragmaList[number];
-
-
 
 // ////////////////////////////////////////////////////////////////////////////
 // SQL Select
@@ -753,19 +741,6 @@ export class SqlSelect {
 
         return this
     }
-
-    where(): SqlSelect {
-        return this.push(() => { return SqlKeyword.WHERE })
-    }
-
-    column(c: SqlColumn): SqlSelect {
-        return this.push(() => c.escapedQualifiedName())
-    }
-
-    placeholder(): SqlSelect {
-        return this.push(() => `${this.options.placeholder}`)
-    }
-
     private op(op: SqlOperator): SqlSelect { return this.push(() => op) }
     eq(): SqlSelect { return this.op(SqlOperator.Eq) }
     ne(): SqlSelect { return this.op(SqlOperator.Ne) }
@@ -773,50 +748,77 @@ export class SqlSelect {
     and(): SqlSelect { return this.op(SqlOperator.AND) }
     or(): SqlSelect { return this.op(SqlOperator.OR) }
     between(): SqlSelect { return this.op(SqlOperator.BETWEEN) }
-    isNot(): SqlSelect { this.op(SqlOperator.IS); return this.op(SqlOperator.NOT) }
+    isNot(): SqlSelect { this.op(SqlOperator.IS); return this.not() }
     semicolon(): SqlSelect { return this.push(() => ';') }
     inner(): SqlSelect { return this.push(() => SqlKeyword.INNER) }
+    outer(): SqlSelect { return this.push(() => SqlKeyword.OUTER) }
     join(): SqlSelect { return this.push(() => SqlKeyword.JOIN) }
+    innerJoin(): SqlSelect { this.inner(); return this.join() }
+    outerJoin(): SqlSelect { this.outer(); return this.join() }
     table(t: SqlTable): SqlSelect { return this.push(() => t.escapedName()) }
     on(): SqlSelect { return this.push(() => SqlKeyword.ON) }
+    by(): SqlSelect { return this.push(() => SqlKeyword.BY) }
+    orderBy(): SqlSelect { this.push(() => SqlKeyword.ORDER); return this.by() }
+    asc(): SqlSelect { return this.push(() => SqlKeyword.ASC) }
+    desc(): SqlSelect { return this.push(() => SqlKeyword.DESC) }
+    where(): SqlSelect { return this.push(() => { return SqlKeyword.WHERE }) }
+    column(c: SqlColumn): SqlSelect { return this.push(() => c.escapedQualifiedName()) }
+    placeholder(): SqlSelect { return this.push(() => `${this.options.placeholder}`) }
 
     emit(): string {
         const words: string[] = []
 
         this.emitters.forEach(e => words.push(e.emit()))
 
-        return words.join(' ')
+        return words.join(' ').replace(';', ';\n')
     }
 }
 
-class EnumHelper<T extends { [k: string]: string }, S extends string> {
-    private e: T
-
-    constructor(e: T) { this.e = e }
-
-    includes(s: S): boolean {
-        return typeof s === 'string' && Object.values(this.e).includes(s);
-    }
-
-    list(): string[] {
-        return Object.values(this.e)
-    }
-
-    parse(s: S): T | undefined {
-        for (const [k, v] of Object.entries(this.e)) {
-            if (v === s) return k as unknown as T
-        }
-        return undefined
-    }
-
-    parseOrThrow(s: S): T {
-        const found = this.parse(s)
-        if (!found) throw new Error(`unknown value: ${s}`)
-        return found
-    }
+enum SqlKeyword {
+    ACTION = "ACTION", ADD = "ADD", AFTER = "AFTER", ALL = "ALL",
+    ALTER = "ALTER", ALWAYS = "ALWAYS", ANALYZE = "ANALYZE",
+    AND = "AND", AS = "AS", ASC = "ASC", ATTACH = "ATTACH",
+    AUTOINCREMENT = "AUTOINCREMENT", BEFORE = "BEFORE",
+    BEGIN = "BEGIN", BETWEEN = "BETWEEN", BY = "BY",
+    CASCADE = "CASCADE", CASE = "CASE", CAST = "CAST", CHECK = "CHECK",
+    COLLATE = "COLLATE", COLUMN = "COLUMN", COMMIT = "COMMIT",
+    CONFLICT = "CONFLICT", CONSTRAINT = "CONSTRAINT", CREATE = "CREATE",
+    CROSS = "CROSS", CURRENT = "CURRENT", CURRENT_DATE = "CURRENT_DATE",
+    CURRENT_TIME = "CURRENT_TIME", CURRENT_TIMESTAMP = "CURRENT_TIMESTAMP",
+    DATABASE = "DATABASE", DEFAULT = "DEFAULT", DEFERRABLE = "DEFERRABLE",
+    DEFERRED = "DEFERRED", DELETE = "DELETE", DESC = "DESC", DETACH = "DETACH",
+    DISTINCT = "DISTINCT", DO = "DO", DROP = "DROP", EACH = "EACH",
+    ELSE = "ELSE", END = "END", ESCAPE = "ESCAPE", EXCEPT = "EXCEPT",
+    EXCLUDE = "EXCLUDE", EXCLUSIVE = "EXCLUSIVE", EXISTS = "EXISTS",
+    EXPLAIN = "EXPLAIN", FAIL = "FAIL", FILTER = "FILTER", FIRST = "FIRST",
+    FOLLOWING = "FOLLOWING", FOR = "FOR", FOREIGN = "FOREIGN", FROM = "FROM",
+    FULL = "FULL", GENERATED = "GENERATED", GLOB = "GLOB", GROUP = "GROUP",
+    GROUPS = "GROUPS", HAVING = "HAVING", IF = "IF", IGNORE = "IGNORE",
+    IMMEDIATE = "IMMEDIATE", IN = "IN", INDEX = "INDEX", INDEXED = "INDEXED",
+    INITIALLY = "INITIALLY", INNER = "INNER", INSERT = "INSERT",
+    INSTEAD = "INSTEAD", INTERSECT = "INTERSECT", INTO = "INTO", IS = "IS",
+    ISNULL = "ISNULL", JOIN = "JOIN", KEY = "KEY", LAST = "LAST",
+    LEFT = "LEFT", LIKE = "LIKE", LIMIT = "LIMIT", MATCH = "MATCH",
+    MATERIALIZED = "MATERIALIZED", NATURAL = "NATURAL", NO = "NO",
+    NOT = "NOT", NOTHING = "NOTHING", NOTNULL = "NOTNULL", NULL = "NULL",
+    NULLS = "NULLS", OF = "OF", OFFSET = "OFFSET", ON = "ON", OR = "OR",
+    ORDER = "ORDER", OTHERS = "OTHERS", OUTER = "OUTER", OVER = "OVER",
+    PARTITION = "PARTITION", PLAN = "PLAN", PRAGMA = "PRAGMA",
+    PRECEDING = "PRECEDING", PRIMARY = "PRIMARY", QUERY = "QUERY",
+    RAISE = "RAISE", RANGE = "RANGE", RECURSIVE = "RECURSIVE",
+    REFERENCES = "REFERENCES", REGEXP = "REGEXP", REINDEX = "REINDEX",
+    RELEASE = "RELEASE", RENAME = "RENAME", REPLACE = "REPLACE",
+    RESTRICT = "RESTRICT", RETURNING = "RETURNING", RIGHT = "RIGHT",
+    ROLLBACK = "ROLLBACK", ROW = "ROW", ROWS = "ROWS",
+    SAVEPOINT = "SAVEPOINT", SELECT = "SELECT", SET = "SET",
+    TABLE = "TABLE", TEMP = "TEMP", TEMPORARY = "TEMPORARY",
+    THEN = "THEN", TIES = "TIES", TO = "TO", TRANSACTION = "TRANSACTION",
+    TRIGGER = "TRIGGER", UNBOUNDED = "UNBOUNDED", UNION = "UNION",
+    UNIQUE = "UNIQUE", UPDATE = "UPDATE", USING = "USING",
+    VACUUM = "VACUUM", VALUES = "VALUES", VIEW = "VIEW",
+    VIRTUAL = "VIRTUAL", WHEN = "WHEN", WHERE = "WHERE", WINDOW = "WINDOW",
+    WITH = "WITH", WITHOUT = "WITHOUT",
 }
-
-enum SqlKeyword { ACTION = "ACTION", ADD = "ADD", AFTER = "AFTER", ALL = "ALL", ALTER = "ALTER", ALWAYS = "ALWAYS", ANALYZE = "ANALYZE", AND = "AND", AS = "AS", ASC = "ASC", ATTACH = "ATTACH", AUTOINCREMENT = "AUTOINCREMENT", BEFORE = "BEFORE", BEGIN = "BEGIN", BETWEEN = "BETWEEN", BY = "BY", CASCADE = "CASCADE", CASE = "CASE", CAST = "CAST", CHECK = "CHECK", COLLATE = "COLLATE", COLUMN = "COLUMN", COMMIT = "COMMIT", CONFLICT = "CONFLICT", CONSTRAINT = "CONSTRAINT", CREATE = "CREATE", CROSS = "CROSS", CURRENT = "CURRENT", CURRENT_DATE = "CURRENT_DATE", CURRENT_TIME = "CURRENT_TIME", CURRENT_TIMESTAMP = "CURRENT_TIMESTAMP", DATABASE = "DATABASE", DEFAULT = "DEFAULT", DEFERRABLE = "DEFERRABLE", DEFERRED = "DEFERRED", DELETE = "DELETE", DESC = "DESC", DETACH = "DETACH", DISTINCT = "DISTINCT", DO = "DO", DROP = "DROP", EACH = "EACH", ELSE = "ELSE", END = "END", ESCAPE = "ESCAPE", EXCEPT = "EXCEPT", EXCLUDE = "EXCLUDE", EXCLUSIVE = "EXCLUSIVE", EXISTS = "EXISTS", EXPLAIN = "EXPLAIN", FAIL = "FAIL", FILTER = "FILTER", FIRST = "FIRST", FOLLOWING = "FOLLOWING", FOR = "FOR", FOREIGN = "FOREIGN", FROM = "FROM", FULL = "FULL", GENERATED = "GENERATED", GLOB = "GLOB", GROUP = "GROUP", GROUPS = "GROUPS", HAVING = "HAVING", IF = "IF", IGNORE = "IGNORE", IMMEDIATE = "IMMEDIATE", IN = "IN", INDEX = "INDEX", INDEXED = "INDEXED", INITIALLY = "INITIALLY", INNER = "INNER", INSERT = "INSERT", INSTEAD = "INSTEAD", INTERSECT = "INTERSECT", INTO = "INTO", IS = "IS", ISNULL = "ISNULL", JOIN = "JOIN", KEY = "KEY", LAST = "LAST", LEFT = "LEFT", LIKE = "LIKE", LIMIT = "LIMIT", MATCH = "MATCH", MATERIALIZED = "MATERIALIZED", NATURAL = "NATURAL", NO = "NO", NOT = "NOT", NOTHING = "NOTHING", NOTNULL = "NOTNULL", NULL = "NULL", NULLS = "NULLS", OF = "OF", OFFSET = "OFFSET", ON = "ON", OR = "OR", ORDER = "ORDER", OTHERS = "OTHERS", OUTER = "OUTER", OVER = "OVER", PARTITION = "PARTITION", PLAN = "PLAN", PRAGMA = "PRAGMA", PRECEDING = "PRECEDING", PRIMARY = "PRIMARY", QUERY = "QUERY", RAISE = "RAISE", RANGE = "RANGE", RECURSIVE = "RECURSIVE", REFERENCES = "REFERENCES", REGEXP = "REGEXP", REINDEX = "REINDEX", RELEASE = "RELEASE", RENAME = "RENAME", REPLACE = "REPLACE", RESTRICT = "RESTRICT", RETURNING = "RETURNING", RIGHT = "RIGHT", ROLLBACK = "ROLLBACK", ROW = "ROW", ROWS = "ROWS", SAVEPOINT = "SAVEPOINT", SELECT = "SELECT", SET = "SET", TABLE = "TABLE", TEMP = "TEMP", TEMPORARY = "TEMPORARY", THEN = "THEN", TIES = "TIES", TO = "TO", TRANSACTION = "TRANSACTION", TRIGGER = "TRIGGER", UNBOUNDED = "UNBOUNDED", UNION = "UNION", UNIQUE = "UNIQUE", UPDATE = "UPDATE", USING = "USING", VACUUM = "VACUUM", VALUES = "VALUES", VIEW = "VIEW", VIRTUAL = "VIRTUAL", WHEN = "WHEN", WHERE = "WHERE", WINDOW = "WINDOW", WITH = "WITH", WITHOUT = "WITHOUT", }
 const SqlKeyWords = new EnumHelper(SqlKeyword)
 
 enum SqlOperator { Eq = "=", Ne = "<>", AND = 'AND', OR = 'OR', IS = 'IS', BETWEEN = 'BETWEEN', IN = 'IN', LIKE = 'LIKE', NOT = 'NOT', }
@@ -825,23 +827,23 @@ const SqlOperators = new EnumHelper(SqlOperator)
 class SqlDdl {
     emitters: Emitter[] = []
 
-    private emit(fn: () => string): SqlDdl {
+    private push(fn: () => string | SqlColumnType): SqlDdl {
         this.emitters.push(new class extends Emitter {
             emit(): string { return fn() }
         })
         return this
     }
 
-    select(...vs: (SqlTable | SqlColumn)[]): SqlDdl {
-        this.emit(() => { return SqlKeyword.SELECT })
-
-        const selects = vs.map(v => {
-            if (v instanceof SqlTable)
-                v.columns.forEach(c => this.emit(() => c.escapedQualifiedName()))
-            if (v instanceof SqlColumn)
-                this.emit(() => v.escapedQualifiedName())
-        })
-
-        return this
-    }
+    create(): SqlDdl { return this.push(() => SqlKeyword.CREATE) }
+    tabel(): SqlDdl { return this.push(() => SqlKeyword.TABLE) }
+    if(): SqlDdl { return this.push(() => SqlKeyword.IF) }
+    not(): SqlDdl { return this.push(() => SqlKeyword.NOT) }
+    exists(): SqlDdl { return this.push(() => SqlKeyword.EXISTS) }
+    ifNotExists(): SqlDdl { this.if(); this.not(); return this.exists() }
+    table(): SqlDdl { return this.push(() => SqlKeyword.TABLE) }
+    name(name: string): SqlDdl { return this.push(() => config.wrapName(name)) }
+    text(): SqlDdl { return this.push(() => 'TEXT') }
+    key(): SqlDdl { return this.push(() => SqlKeyword.KEY) }
+    primary(): SqlDdl { return this.push(() => SqlKeyword.PRIMARY) }
+    primaryKey(): SqlDdl { this.primary(); return this.key(); }
 }

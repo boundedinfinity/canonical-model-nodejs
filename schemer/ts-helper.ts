@@ -1,5 +1,7 @@
 import { KindUtils, type KindSchema } from './kind'
-import utils from './utils'
+import { utils, EnumHelper, Emitter, Indenter } from './utils'
+
+export { utils }
 
 // https://www.qualdesk.com/blog/2021/type-guard-for-string-union-types-typescript/
 // copilot:  "create a type guard for string union types in TypeScript for the following values ..."
@@ -91,4 +93,93 @@ export const tsHelper = {
 
 function n(input: string | KindSchema): string {
     return typeof input === 'string' ? input : KindUtils.resolveName(input)
+}
+
+// ////////////////////////////////////////////////////////////////////////////
+// Typescript Keywords
+// ////////////////////////////////////////////////////////////////////////////
+
+export enum TypescriptKeyword {
+    BREAK = "break", CASE = "case", CATCH = "catch", CLASS = "class", CONST = "const",
+    CONTINUE = "continue", DEBUGGER = "debugger", DEFAULT = "default", DELETE = "delete",
+    DO = "do", ELSE = "else", ENUM = "enum", EXPORT = "export", EXTENDS = "extends",
+    FALSE = "false", FINALLY = "finally", FOR = "for", FUNCTION = "function", IF = "if",
+    IMPORT = "import", IN = "in", INSTANCEOF = "instanceof", NEW = "new", NULL = "null",
+    RETURN = "return", SUPER = "super", SWITCH = "switch", THIS = "this", THROW = "throw",
+    TRUE = "true", TRY = "try", TYPEOF = "typeof", VAR = "var", VOID = "void",
+    WHILE = "while", WITH = "with", AS = "as", IMPLEMENTS = "implements",
+    INTERFACE = "interface", LET = "let", PACKAGE = "package", PRIVATE = "private",
+    PROTECTED = "protected", PUBLIC = "public", STATIC = "static", YIELD = "yield",
+    ANY = "any", BOOLEAN = "boolean", CONSTRUCTOR = "constructor", DECLARE = "declare",
+    GET = "get", MODULE = "module", REQUIRE = "require", NUMBER = "number", SET = "set",
+    STRING = "string", SYMBOL = "symbol", TYPE = "type", FROM = "from", OF = "of",
+}
+
+const TypescriptKeywords = new EnumHelper(TypescriptKeyword)
+
+
+// ////////////////////////////////////////////////////////////////////////////
+// Typescript Builder
+// ////////////////////////////////////////////////////////////////////////////
+
+type TypescriptBuilderOptions = {
+
+}
+
+export class TypescriptBuilder {
+    indenter: Indenter
+    emitters: Emitter[] = []
+
+    constructor(options?: TypescriptBuilderOptions) {
+        this.indenter = new Indenter()
+    }
+
+    private push(fn: () => string): TypescriptBuilder {
+        this.emitters.push(new class extends Emitter {
+            emit(): string { return fn() }
+        })
+        return this
+    }
+
+    emit(): string {
+        return this.emitters.map(e => e.emit()).join(' ')
+    }
+
+    className(name: string): TypescriptBuilder { return this.push(() => tsHelper.name.ts.class(name)) }
+    propertyName(name: string): TypescriptBuilder { return this.push(() => tsHelper.name.ts.property(name)) }
+    variableName(name: string): TypescriptBuilder { return this.push(() => tsHelper.name.ts.variable(name)) }
+    literal(value: string): TypescriptBuilder { return this.push(() => value) }
+    class(): TypescriptBuilder { return this.push(() => TypescriptKeyword.CLASS) }
+    import(): TypescriptBuilder { return this.push(() => TypescriptKeyword.IMPORT) }
+    from(): TypescriptBuilder { return this.push(() => TypescriptKeyword.FROM) }
+    export(): TypescriptBuilder { return this.push(() => TypescriptKeyword.EXPORT) }
+    this(): TypescriptBuilder { return this.push(() => TypescriptKeyword.THIS) }
+    const(): TypescriptBuilder { return this.push(() => TypescriptKeyword.CONST) }
+    as(): TypescriptBuilder { return this.push(() => TypescriptKeyword.AS) }
+    angle(): TypescriptBuilder { return this.push(() => '<>') }
+    colon(): TypescriptBuilder { return this.push(() => ':') }
+    semicolon(): TypescriptBuilder { return this.push(() => ';') }
+    equals(): TypescriptBuilder { return this.push(() => '=') }
+    comma(): TypescriptBuilder { return this.push(() => ',') }
+    dot(): TypescriptBuilder { return this.push(() => '.') }
+    arrow(): TypescriptBuilder { return this.push(() => '=>') }
+    pipe(): TypescriptBuilder { return this.push(() => '|') }
+    question(): TypescriptBuilder { return this.push(() => '?') }
+    string(): TypescriptBuilder { return this.push(() => TypescriptKeyword.STRING) }
+    square(builder: TypescriptBuilder): TypescriptBuilder {
+        return this.push(() => '[' + builder.emitters.map(e => e.emit()).join(',') + ']')
+    }
+    parens(builder: TypescriptBuilder): TypescriptBuilder {
+        return this.push(() => '(' + builder.emitters.map(e => e.emit()).join(',') + ')')
+    }
+    object(): TypescriptBuilder { return this.push(() => '{}') }
+    newline(): TypescriptBuilder { return this.push(() => '\n') }
+    curly(builder: TypescriptBuilder): TypescriptBuilder {
+        return this.push(() => '{' + builder.emitters.map(e => e.emit()).join('') + '}')
+    }
+    tab(): TypescriptBuilder { return this.push(() => '    ') }
+}
+
+export function b(): TypescriptBuilder {
+    return new TypescriptBuilder()
 }

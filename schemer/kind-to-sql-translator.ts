@@ -5,9 +5,9 @@ import {
     SqlColumnTextMax, SqlColumnTextMin, SqlColumnNumberMin, SqlColumnNumberMax,
     sqlUtil
 } from "./sql-generator";
-import type { SqlColumn, SqlColumnOptions, SqlGeneratorOptions } from './sql-generator'
-import utils from './utils'
-import { tsHelper } from './ts-helper'
+import type { SqlColumn, SqlGeneratorOptions } from './sql-generator'
+import { tsHelper, utils, } from './ts-helper'
+import { Emitter } from './utils'
 
 type HelperOptions = {
     arraySep: string
@@ -69,7 +69,8 @@ export class KindToSqlDdlTranslator {
     }
 
     // https://www.sqlite.org/datatype3.html
-    process() {
+    emit(): string {
+        const queries = new Map<string, Emitter>()
         const database = this.generator.database('schemer')
         const getKindTable = this.h.getKindTableFn(database)
 
@@ -136,7 +137,7 @@ export class KindToSqlDdlTranslator {
                     {
                         if (this.registry.isPrimitive(prop)) {
                             const arrayTable = database.addTable(this.h.arrayTableName(obj, prop))
-                            arrayTable.column('index', 'INTEGER', { ordered: 'ASC' })
+                            arrayTable.column(sqlUtil.defaults.arrayPositionColumn, 'INTEGER', { ordered: 'ASC', primary: true })
                             column = arrayTable.column(this.h.dbname(prop))
                             database.oneToManyByTable(getKindTable(obj), arrayTable)
                             round2(obj, prop.items, column)
@@ -158,7 +159,12 @@ export class KindToSqlDdlTranslator {
         }
 
         this.registry.registry.forEach((kind) => round1(kind))
-        this.registry.registry.forEach((obj) => (obj as ObjectSchema).properties.forEach((prop) => round2(obj, prop)))
+        this.registry.registry
+            .forEach((obj) => (obj as ObjectSchema)
+                .properties.forEach((prop) => round2(obj, prop)))
+
+        // return JSON.stringify({ 'ddl': database.emit() }, null, 4)
+        return database.emit()
     }
 }
 
@@ -184,14 +190,19 @@ export class KindToSqlQueryTranslator {
     }
 
     // https://www.sqlite.org/datatype3.html
-    process(): { [name: string]: string } {
+    emit(): string {
         const database = this.generator.databases[0]
         const getKindTable = this.h.getKindTableFn(database)
-        const queries = new Map<string, SqlSelect>()
+        const queries = new Map<string, SqlSelect[]>()
 
         const queryName = (prefix: string, obj: string | KindSchema, prop: string | KindSchema) => {
             let name = prefix + tsHelper.name.ts.class(obj) + tsHelper.name.ts.class(prop)
             return name
+        }
+
+        const pushQuery = (name: string, query: SqlSelect) => {
+            if (!queries.has(name)) queries.set(name, [])
+            queries.get(name)!.push(query)
         }
 
         const round1 = (obj: KindSchema) => {
@@ -201,8 +212,9 @@ export class KindToSqlQueryTranslator {
                         const table = getKindTable(obj)
                         const pk = table.getPrimaryKeyOrThrow()
                         const name = queryName('by', obj, "Id")
-                        const query = new SqlSelect(this.options).select(table).where().column(pk).eq().placeholder()
-                        queries.set(name, query)
+                        const query = new SqlSelect(this.options)
+                            .select(table).where().column(pk).eq().placeholder()
+                        pushQuery(name, query)
                         obj.properties.forEach((prop) => round2(obj, prop))
                     }
                     break
@@ -238,22 +250,27 @@ export class KindToSqlQueryTranslator {
                         const query = new SqlSelect(this.options)
                             .select(table)
                             .where().column(column).eq().placeholder()
-                        queries.set(qname, query)
+                        pushQuery(qname, query)
                     }
                     break
                 case 'array':
                     if (this.registry.isPrimitive(prop)) {
+                        const parentTable = getKindTable(obj)
                         const parentKey = getKindTable(obj).getPrimaryKeyOrThrow()
                         const arrayTableName = this.h.arrayTableName(obj, prop)
                         const arrayTable = database.getTableOrThrow(arrayTableName)
                         const arrayKey = arrayTable.getColumnOrThrow(parentKey.foreignKeyName())
-
+                        const searchColumn = arrayTable.getColumnOrThrow(name)
                         const qname = queryName('by', obj, prop)
                         const query = new SqlSelect(this.options)
-                            .select(arrayTable)
+
+                        query.select(parentTable)
                             .join().column(parentKey).eq().column(arrayKey)
-                            .where().column(arrayKey).eq().placeholder()
-                        queries.set(qname, query)
+                            .where().column(searchColumn).eq().placeholder()
+                            .orderBy().column(arrayTable.getColumnOrThrow(sqlUtil.defaults.arrayPositionColumn)).asc()
+                            .semicolon()
+
+                        pushQuery(qname, query)
 
                     } else {
                         const pk = getKindTable(obj).getPrimaryKeyOrThrow()
@@ -267,16 +284,9 @@ export class KindToSqlQueryTranslator {
             }
         }
 
-
-
         this.registry.registry.forEach((obj) => round1(obj))
-        const output: { [name: string]: string } = {}
-        queries.keys().forEach(name => { output[name] = queries.get(name)!.emit() })
-
-        return output
-    }
-
-    emit(): string {
-        return JSON.stringify(this.process(), null, 4)
+        const output: { [name: string]: string[] } = {}
+        queries.keys().forEach(name => output[name] = queries.get(name)!.map(query => query.emit()))
+        return JSON.stringify(output, null, 4)
     }
 }

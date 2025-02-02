@@ -7,10 +7,9 @@ import { SqlGenerator } from './sql-generator'
 import { KindToSqlDdlTranslator, KindToSqlQueryTranslator } from './kind-to-sql-translator'
 import { tsHelper } from './ts-helper'
 import {
-    TsgLanguageGenerator, TsgFile, TsgClass, TsgProperty,
-    TsgConstructor, TsgAssignement, TsgFluidFunction,
-    TypeScriptFuntionCall, TsgObjectLiteral, TsgObjectLiteralProperty,
-    TsgLiteral, TsgBareword, TsgFunctionInputArg
+    TsgLanguageGenerator, TsgFile, TsgProperty, TsgConstructor, TsgAssignement,
+    TsgFluidFunction, TypeScriptFuntionCall, TsgObjectLiteral, TsgObjectLiteralProperty,
+    TsgBareword, TsgFunctionInputArg
 } from './ts-generator'
 
 export class Generator {
@@ -217,9 +216,8 @@ export class Generator {
         this.registry.registry.values().forEach(kind => this.processTopLevelKinds(kind))
 
         const sqlGenerator = new SqlGenerator()
-        const sqlTranslator = new KindToSqlDdlTranslator(this.registry, sqlGenerator)
-        sqlTranslator.process()
-        console.log(sqlGenerator.emit())
+        const sqlDdlTranslator = new KindToSqlDdlTranslator(this.registry, sqlGenerator)
+        console.log(sqlDdlTranslator.emit())
 
         const sqlQueryTranslator = new KindToSqlQueryTranslator(this.registry, sqlGenerator)
         console.log(sqlQueryTranslator.emit())
