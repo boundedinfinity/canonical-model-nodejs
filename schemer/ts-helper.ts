@@ -1,8 +1,6 @@
 import { KindUtils, type KindSchema } from './kind'
 import { utils, EnumHelper, Emitter, Indenter } from './utils'
 
-export { utils }
-
 // https://www.qualdesk.com/blog/2021/type-guard-for-string-union-types-typescript/
 // copilot:  "create a type guard for string union types in TypeScript for the following values ..."
 const TsgBuiltInTypeList = ['string', 'number', 'boolean', 'object', 'any', 'void', 'null', 'undefined'] as const;
@@ -123,15 +121,19 @@ const TypescriptKeywords = new EnumHelper(TypescriptKeyword)
 // ////////////////////////////////////////////////////////////////////////////
 
 type TypescriptBuilderOptions = {
-
+    tabsOrSpaces: 'spaces' | 'tabs'
 }
 
 export class TypescriptBuilder {
+    options: TypescriptBuilderOptions = {
+        tabsOrSpaces: 'spaces'
+    }
     indenter: Indenter
     emitters: Emitter[] = []
 
-    constructor(options?: TypescriptBuilderOptions) {
-        this.indenter = new Indenter()
+    constructor(options?: Partial<TypescriptBuilderOptions>) {
+        this.options = { ...this.options, ...options }
+        this.indenter = new Indenter(this.options)
     }
 
     private push(fn: () => string): TypescriptBuilder {
@@ -142,13 +144,11 @@ export class TypescriptBuilder {
     }
 
     emit(): string {
-        return this.emitters.map(e => e.emit()).join(' ')
+        return this.emitters.map(
+            emitter => emitter.emit()
+        ).join(' ')
     }
 
-    className(name: string): TypescriptBuilder { return this.push(() => tsHelper.name.ts.class(name)) }
-    propertyName(name: string): TypescriptBuilder { return this.push(() => tsHelper.name.ts.property(name)) }
-    variableName(name: string): TypescriptBuilder { return this.push(() => tsHelper.name.ts.variable(name)) }
-    literal(value: string): TypescriptBuilder { return this.push(() => value) }
     class(): TypescriptBuilder { return this.push(() => TypescriptKeyword.CLASS) }
     import(): TypescriptBuilder { return this.push(() => TypescriptKeyword.IMPORT) }
     from(): TypescriptBuilder { return this.push(() => TypescriptKeyword.FROM) }
@@ -166,20 +166,118 @@ export class TypescriptBuilder {
     pipe(): TypescriptBuilder { return this.push(() => '|') }
     question(): TypescriptBuilder { return this.push(() => '?') }
     string(): TypescriptBuilder { return this.push(() => TypescriptKeyword.STRING) }
+    parenOpen(): TypescriptBuilder { return this.push(() => '(') }
+    parenClose(): TypescriptBuilder { return this.push(() => ')') }
+    id(value: string): TypescriptBuilder { return this.push(() => value) }
+    newline(): TypescriptBuilder { return this.push(() => '\n') }
+    curlyOpen(): TypescriptBuilder { return this.push(() => '{') }
+    curlyClose(): TypescriptBuilder { return this.push(() => '}') }
+    indent(): TypescriptBuilder { this.indenter.indent(); return this }
+    dedent(): TypescriptBuilder { this.indenter.dedent(); return this }
+
+    singleLineComment(...lines: string[]): TypescriptBuilder {
+        lines.forEach(line => this.push(() => `// ${line}`))
+        return this
+    }
+
+    multLineComment(...lines: string[]): TypescriptBuilder {
+        for (let i = 0; i < lines.length; i++) {
+            switch (i) {
+                case 0:
+                    this.push(() => '/* ' + lines[i])
+                    break
+                case lines.length - 1:
+                    this.push(() => lines[i] + ' */')
+                    break
+                default:
+                    this.push(() => lines[i])
+            }
+        }
+        return this
+    }
+
+    tab(): TypescriptBuilder {
+        return this.push(() => this.indenter.emit())
+    }
+
+    literal(value: string | number | boolean): TypescriptBuilder {
+        switch (typeof value) {
+            case 'string':
+                this.push(() => `'${value}'`)
+                break
+            case 'number':
+                this.push(() => `${value}`)
+                break
+            case 'boolean':
+                this.push(() => value ? 'true' : 'false')
+                break
+            default:
+                throw new Error(`literal: ${JSON.stringify(value)} unknown type ${typeof value}`)
+        }
+        return this
+    }
+
     square(builder: TypescriptBuilder): TypescriptBuilder {
         return this.push(() => '[' + builder.emitters.map(e => e.emit()).join(',') + ']')
     }
-    parens(builder: TypescriptBuilder): TypescriptBuilder {
-        return this.push(() => '(' + builder.emitters.map(e => e.emit()).join(',') + ')')
+
+    parens(...builders: TypescriptBuilder[]): TypescriptBuilder {
+        this.parenOpen()
+
+        for (let i = 0; i < builders.length; i++) {
+            this.emitters.push(...builders[i].emitters)
+            if (i < builders.length - 1) this.comma()
+        }
+
+        return this.parenClose()
     }
-    object(): TypescriptBuilder { return this.push(() => '{}') }
-    newline(): TypescriptBuilder { return this.push(() => '\n') }
-    curly(builder: TypescriptBuilder): TypescriptBuilder {
-        return this.push(() => '{' + builder.emitters.map(e => e.emit()).join('') + '}')
+
+    chain(...builders: TypescriptBuilder[]): TypescriptBuilder {
+        for (let i = 0; i < builders.length; i++) {
+            this.emitters.push(...builders[i].emitters)
+            if (i < builders.length - 1) this.dot()
+        }
+
+        return this
     }
-    tab(): TypescriptBuilder { return this.push(() => '    ') }
+
+    body(...builders: TypescriptBuilder[]): TypescriptBuilder {
+        this.curlyOpen().newline()
+
+        for (let i = 0; i < builders.length; i++) {
+            const builder = builders[i]
+            builder.indent()
+            this.emitters.push(...builder.emitters)
+            if (i < builders.length - 1) this.newline()
+        }
+
+        this.dedent()
+        return this.newline().curlyClose()
+    }
+
+    object(...builders: TypescriptBuilder[]): TypescriptBuilder {
+        this.curlyOpen()
+
+        if (builders.length > 0) this.newline()
+        this.indent()
+
+        for (let i = 0; i < builders.length; i++) {
+            const builder = builders[i]
+            this.emitters.push(...builder.emitters)
+            this.comma()
+            this.newline()
+        }
+
+        this.dedent()
+        return this.curlyClose()
+    }
 }
 
-export function b(): TypescriptBuilder {
-    return new TypescriptBuilder()
+export const b = {
+    o: function (options: Partial<TypescriptBuilderOptions>) { return new TypescriptBuilder(options) },
+    export: function () { return new TypescriptBuilder().export() },
+    import: function () { return new TypescriptBuilder().import() },
+    id: function (value: string) { return new TypescriptBuilder().id(value) },
+    literal: function (value: string | number | boolean) { return new TypescriptBuilder().literal(value) },
+    object: function (...builders: TypescriptBuilder[]) { return new TypescriptBuilder().object(...builders) },
 }

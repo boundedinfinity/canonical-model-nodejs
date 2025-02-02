@@ -298,40 +298,40 @@ export class CreateSqlTable {
         lines.push(words.join(' '))
         words = []
 
-        indenter.inc()
+        indenter.indent()
 
         if (this.table.columns.length > 0) {
             const emits = this.table.columns
                 .map(c => c.emit())
-                .map(c => indenter.indent(c))
+                .map(c => indenter.emit(c))
                 .join(",|")
                 .split('|')
             lines.push(...emits)
         }
 
         if (this.table.checks.length > 0) {
-            lines.push(indenter.indent('CHECK ('))
-            indenter.inc()
+            lines.push(indenter.emit('CHECK ('))
+            indenter.indent()
             const emits = this.table.checks
                 .map(c => c.emit())
-                .map(c => indenter.indent(c))
+                .map(c => indenter.emit(c))
                 .join(' AND|')
                 .split('|')
             lines.push(...emits)
-            indenter.dec()
-            lines.push(indenter.indent(')'))
+            indenter.dedent()
+            lines.push(indenter.emit(')'))
         }
 
         if (this.table.foreignKeys.length > 0) {
             const emits = this.table.foreignKeys
                 .map(fk => fk.emit())
-                .map(c => indenter.indent(c))
+                .map(c => indenter.emit(c))
                 .join(',|')
                 .split('|')
             lines.push(...emits)
         }
 
-        indenter.dec()
+        indenter.dedent()
 
         if (this.options.withoutRowId) words.push('WITHOUT ROWID')
         if (this.options.strict) words.push('STRICT')

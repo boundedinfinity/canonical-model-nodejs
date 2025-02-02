@@ -6,8 +6,8 @@ import {
     sqlUtil
 } from "./sql-generator";
 import type { SqlColumn, SqlGeneratorOptions } from './sql-generator'
-import { tsHelper, utils, } from './ts-helper'
-import { Emitter } from './utils'
+import { tsHelper, } from './ts-helper'
+import { Emitter, utils } from './utils'
 
 type HelperOptions = {
     arraySep: string

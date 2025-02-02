@@ -1,30 +1,45 @@
+
+
 export type IdenterOpotions = {
+    tabsOrSpaces: 'spaces' | 'tabs'
     level: number
-    char: string
+    tabWidth: number
 }
 
 export class Indenter {
-    options: IdenterOpotions = { level: 0, char: '    ' }
+    options: IdenterOpotions = {
+        tabsOrSpaces: 'spaces',
+        level: 0,
+        tabWidth: 4
+    }
 
     constructor(options?: Partial<IdenterOpotions>) {
         this.options = { ...this.options, ...options }
     }
 
-    indent(text: string): string {
-        let prefix = this.options.char.repeat(this.options.level)
-        return prefix + text
+    emit(text?: string): string {
+        let output: string
+
+        switch (this.options.tabsOrSpaces) {
+            case 'tabs':
+                output = '\t'.repeat(this.options.level)
+                break
+            default:
+                output = ' '.repeat(this.options.level * this.options.tabWidth)
+        }
+
+        if (text) output += text
+
+        return output
     }
 
-    indentLines(lines: string[]): string[] {
-        return lines.map(l => this.indent(l))
+    emitLines(lines: string[]): string[] {
+        return lines.map(l => this.emit(l))
     }
 
-    inc() {
-        this.options.level++
-    }
-
-    dec() {
-        this.options.level--
+    indent() { this.options.level += 1 }
+    dedent() {
+        this.options.level -= 1
         if (this.options.level < 0) this.options.level = 0
     }
 }
