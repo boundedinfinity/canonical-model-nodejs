@@ -1,7 +1,7 @@
 import npath from 'node:path'
 import { writeFileSync } from 'node:fs'
 import type { KindSchema } from './kind'
-import utils from './utils'
+import { utils } from './utils'
 import { tsHelper, type TsgBuiltInType } from './ts-helper'
 
 const config = {

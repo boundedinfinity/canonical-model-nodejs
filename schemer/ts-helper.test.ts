@@ -5,9 +5,9 @@ test("TypescriptBuilder", () => {
     console.log('====================================')
 
     console.log(
-        b.import().body(
-            b.id('v4').as().id('uuid').comma()
-                .id('NIL').as().id('NIL_UUID')
+        b.import().curly(
+            b.id('v4').as().id('uuid'),
+            b.id('NIL').as().id('NIL_UUID')
         ).from().literal('uuid').semicolon()
             .emit()
     ); console.log()

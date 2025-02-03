@@ -12,6 +12,8 @@ import {
     TsgBareword, TsgFunctionInputArg
 } from './ts-generator'
 
+import { KindToTypescriptTransator } from './kind-typescript-translator'
+
 export class Generator {
     private registry = new KindRegistry()
     private tsProject = new TsgLanguageGenerator({ formatOutput: true })
@@ -204,23 +206,27 @@ export class Generator {
         kinds?.forEach(schema => this.registry.register(schema))
         this.registry.validate()
 
-        this.registry.registry.values().forEach(kind => {
-            const classKindKind = KindUtils.resolveKind(kind)
-            const filename = tsHelper.name.ts.file(classKindKind)
-            const tsClassName = tsHelper.name.ts.class(classKindKind)
-            const file = this.tsProject.getFile(filename)
-            const klass = file.getClass(tsClassName)
-            console.log(`class: ${klass.name}`)
-        })
+        // this.registry.registry.values().forEach(kind => {
+        //     const classKindKind = KindUtils.resolveKind(kind)
+        //     const filename = tsHelper.name.ts.file(classKindKind)
+        //     const tsClassName = tsHelper.name.ts.class(classKindKind)
+        //     const file = this.tsProject.getFile(filename)
+        //     const klass = file.getClass(tsClassName)
+        //     console.log(`class: ${klass.name}`)
+        // })
 
-        this.registry.registry.values().forEach(kind => this.processTopLevelKinds(kind))
+        // this.registry.registry.values().forEach(kind => this.processTopLevelKinds(kind))
 
-        const sqlGenerator = new SqlGenerator()
-        const sqlDdlTranslator = new KindToSqlDdlTranslator(this.registry, sqlGenerator)
-        console.log(sqlDdlTranslator.emit())
+        console.log()
+        const typescriptTranslater = new KindToTypescriptTransator(this.registry)
+        console.log(typescriptTranslater.emit())
 
-        const sqlQueryTranslator = new KindToSqlQueryTranslator(this.registry, sqlGenerator)
-        console.log(sqlQueryTranslator.emit())
+        // const sqlGenerator = new SqlGenerator()
+        // const sqlDdlTranslator = new KindToSqlDdlTranslator(this.registry, sqlGenerator)
+        // console.log(sqlDdlTranslator.emit())
+
+        // const sqlQueryTranslator = new KindToSqlQueryTranslator(this.registry, sqlGenerator)
+        // console.log(sqlQueryTranslator.emit())
     }
 
     processProject() {

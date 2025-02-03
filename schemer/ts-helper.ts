@@ -129,54 +129,65 @@ export class TypescriptBuilder {
         tabsOrSpaces: 'spaces'
     }
     indenter: Indenter
-    emitters: Emitter[] = []
+    buffer: string = ''
 
     constructor(options?: Partial<TypescriptBuilderOptions>) {
         this.options = { ...this.options, ...options }
         this.indenter = new Indenter(this.options)
     }
 
-    private push(fn: () => string): TypescriptBuilder {
-        this.emitters.push(new class extends Emitter {
-            emit(): string { return fn() }
-        })
+    add<T extends string>(value: T, nospace?: boolean): TypescriptBuilder {
+        this.buffer += value
+        if (!nospace) this.buffer += ' '
         return this
     }
 
     emit(): string {
-        return this.emitters.map(
-            emitter => emitter.emit()
-        ).join(' ')
+        return this.buffer
     }
 
-    class(): TypescriptBuilder { return this.push(() => TypescriptKeyword.CLASS) }
-    import(): TypescriptBuilder { return this.push(() => TypescriptKeyword.IMPORT) }
-    from(): TypescriptBuilder { return this.push(() => TypescriptKeyword.FROM) }
-    export(): TypescriptBuilder { return this.push(() => TypescriptKeyword.EXPORT) }
-    this(): TypescriptBuilder { return this.push(() => TypescriptKeyword.THIS) }
-    const(): TypescriptBuilder { return this.push(() => TypescriptKeyword.CONST) }
-    as(): TypescriptBuilder { return this.push(() => TypescriptKeyword.AS) }
-    angle(): TypescriptBuilder { return this.push(() => '<>') }
-    colon(): TypescriptBuilder { return this.push(() => ':') }
-    semicolon(): TypescriptBuilder { return this.push(() => ';') }
-    equals(): TypescriptBuilder { return this.push(() => '=') }
-    comma(): TypescriptBuilder { return this.push(() => ',') }
-    dot(): TypescriptBuilder { return this.push(() => '.') }
-    arrow(): TypescriptBuilder { return this.push(() => '=>') }
-    pipe(): TypescriptBuilder { return this.push(() => '|') }
-    question(): TypescriptBuilder { return this.push(() => '?') }
-    string(): TypescriptBuilder { return this.push(() => TypescriptKeyword.STRING) }
-    parenOpen(): TypescriptBuilder { return this.push(() => '(') }
-    parenClose(): TypescriptBuilder { return this.push(() => ')') }
-    id(value: string): TypescriptBuilder { return this.push(() => value) }
-    newline(): TypescriptBuilder { return this.push(() => '\n') }
-    curlyOpen(): TypescriptBuilder { return this.push(() => '{') }
-    curlyClose(): TypescriptBuilder { return this.push(() => '}') }
+    b(builder: TypescriptBuilder): TypescriptBuilder {
+        this.buffer += builder.emit()
+        return this
+    }
+
+    class(): TypescriptBuilder { return this.add(TypescriptKeyword.CLASS) }
+    import(): TypescriptBuilder { return this.add(TypescriptKeyword.IMPORT) }
+    from(): TypescriptBuilder { return this.add(TypescriptKeyword.FROM) }
+    export(): TypescriptBuilder { return this.add(TypescriptKeyword.EXPORT) }
+    this(): TypescriptBuilder { return this.add(TypescriptKeyword.THIS) }
+    const(): TypescriptBuilder { return this.add(TypescriptKeyword.CONST) }
+    as(): TypescriptBuilder { return this.add(TypescriptKeyword.AS) }
+    angleOpen(): TypescriptBuilder { return this.add('<') }
+    angleClose(): TypescriptBuilder { return this.add('>') }
+    colon(): TypescriptBuilder { return this.add(':') }
+    semicolon(): TypescriptBuilder { return this.add(';') }
+    equals(): TypescriptBuilder { return this.add('=') }
+    comma(): TypescriptBuilder { return this.add(',') }
+    dot(): TypescriptBuilder { return this.add('.') }
+    arrow(): TypescriptBuilder { return this.add('=>') }
+    pipe(): TypescriptBuilder { return this.add('|') }
+    question(): TypescriptBuilder { return this.add('?') }
+    string(): TypescriptBuilder { return this.add(TypescriptKeyword.STRING) }
+    parenOpen(): TypescriptBuilder { return this.add('(') }
+    parenClose(): TypescriptBuilder { return this.add(')') }
+    id(value: string): TypescriptBuilder { return this.add(value) }
+    newline(): TypescriptBuilder { return this.add('\n') }
+    curlyOpen(): TypescriptBuilder { return this.add('{') }
+    curlyClose(): TypescriptBuilder { return this.add('}') }
+    squareOpen(): TypescriptBuilder { return this.add('[') }
+    squareClose(): TypescriptBuilder { return this.add(']') }
     indent(): TypescriptBuilder { this.indenter.indent(); return this }
     dedent(): TypescriptBuilder { this.indenter.dedent(); return this }
+    raw(value: string): TypescriptBuilder { return this.add(value) }
+    tab(): TypescriptBuilder { return this.add(this.indenter.emit()) }
+
 
     singleLineComment(...lines: string[]): TypescriptBuilder {
-        lines.forEach(line => this.push(() => `// ${line}`))
+        for (let i = 0; i < lines.length; i++) {
+            this.add(`// ${lines[i]}`)
+            if (i < lines.length - 1) this.newline()
+        }
         return this
     }
 
@@ -184,32 +195,30 @@ export class TypescriptBuilder {
         for (let i = 0; i < lines.length; i++) {
             switch (i) {
                 case 0:
-                    this.push(() => '/* ' + lines[i])
+                    this.add('/* ' + lines[i])
                     break
                 case lines.length - 1:
-                    this.push(() => lines[i] + ' */')
+                    this.add(lines[i] + ' */')
                     break
                 default:
-                    this.push(() => lines[i])
+                    this.add(lines[i])
             }
+
+            if (i < lines.length - 1) this.newline()
         }
         return this
-    }
-
-    tab(): TypescriptBuilder {
-        return this.push(() => this.indenter.emit())
     }
 
     literal(value: string | number | boolean): TypescriptBuilder {
         switch (typeof value) {
             case 'string':
-                this.push(() => `'${value}'`)
+                this.add(`'${value}'`)
                 break
             case 'number':
-                this.push(() => `${value}`)
+                this.add(`${value}`)
                 break
             case 'boolean':
-                this.push(() => value ? 'true' : 'false')
+                this.add(value ? 'true' : 'false')
                 break
             default:
                 throw new Error(`literal: ${JSON.stringify(value)} unknown type ${typeof value}`)
@@ -217,25 +226,42 @@ export class TypescriptBuilder {
         return this
     }
 
-    square(builder: TypescriptBuilder): TypescriptBuilder {
-        return this.push(() => '[' + builder.emitters.map(e => e.emit()).join(',') + ']')
+    private bracked(open: () => TypescriptBuilder, close: () => TypescriptBuilder, ...builders: TypescriptBuilder[]): TypescriptBuilder {
+        open()
+
+        for (let i = 0; i < builders.length; i++) {
+            this.add(builders[i].emit())
+            if (notLast(builders, i)) this.comma()
+        }
+
+        return close()
+    }
+
+    square(...builders: TypescriptBuilder[]): TypescriptBuilder {
+        return this.bracked(() => this.squareOpen(), () => this.squareClose(), ...builders)
     }
 
     parens(...builders: TypescriptBuilder[]): TypescriptBuilder {
-        this.parenOpen()
+        return this.bracked(() => this.parenOpen(), () => this.parenClose(), ...builders)
+    }
 
-        for (let i = 0; i < builders.length; i++) {
-            this.emitters.push(...builders[i].emitters)
-            if (i < builders.length - 1) this.comma()
-        }
+    angle(...builders: TypescriptBuilder[]): TypescriptBuilder {
+        return this.bracked(() => this.angleOpen(), () => this.angleClose(), ...builders)
+    }
 
-        return this.parenClose()
+    curly(...builders: TypescriptBuilder[]): TypescriptBuilder {
+        return this.bracked(() => this.curlyOpen(), () => this.curlyClose(), ...builders)
+    }
+
+    ctor(...builders: TypescriptBuilder[]): TypescriptBuilder {
+        this.add(TypescriptKeyword.CONSTRUCTOR)
+        return this.parens(...builders)
     }
 
     chain(...builders: TypescriptBuilder[]): TypescriptBuilder {
         for (let i = 0; i < builders.length; i++) {
-            this.emitters.push(...builders[i].emitters)
-            if (i < builders.length - 1) this.dot()
+            this.add(builders[i].emit())
+            if (notLast(builders, i)) this.dot()
         }
 
         return this
@@ -243,12 +269,12 @@ export class TypescriptBuilder {
 
     body(...builders: TypescriptBuilder[]): TypescriptBuilder {
         this.curlyOpen().newline()
+        this.indent()
 
         for (let i = 0; i < builders.length; i++) {
-            const builder = builders[i]
-            builder.indent()
-            this.emitters.push(...builder.emitters)
-            if (i < builders.length - 1) this.newline()
+            this.tab()
+            this.add(builders[i].emit())
+            if (notLast(builders, i)) this.newline()
         }
 
         this.dedent()
@@ -258,23 +284,38 @@ export class TypescriptBuilder {
     object(...builders: TypescriptBuilder[]): TypescriptBuilder {
         this.curlyOpen()
 
-        if (builders.length > 0) this.newline()
-        this.indent()
-
-        for (let i = 0; i < builders.length; i++) {
-            const builder = builders[i]
-            this.emitters.push(...builder.emitters)
-            this.comma()
+        if (builders.length > 0) {
             this.newline()
+            this.indent()
         }
 
-        this.dedent()
+        for (let i = 0; i < builders.length; i++) {
+            this.tab()
+            this.add(builders[i].emit())
+
+            if (notLast(builders, i)) {
+                this.comma()
+            }
+
+            if (builders.length > 0) {
+                this.newline()
+            }
+        }
+
+        if (builders.length > 0) {
+            this.dedent()
+        }
+
         return this.curlyClose()
     }
 }
 
+function notLast<T>(arr: T[], i: number): boolean {
+    return i < arr.length - 1
+}
+
 export const b = {
-    o: function (options: Partial<TypescriptBuilderOptions>) { return new TypescriptBuilder(options) },
+    o: function (options?: Partial<TypescriptBuilderOptions>) { return new TypescriptBuilder(options) },
     export: function () { return new TypescriptBuilder().export() },
     import: function () { return new TypescriptBuilder().import() },
     id: function (value: string) { return new TypescriptBuilder().id(value) },
