@@ -120,6 +120,8 @@ const TypescriptKeywords = new EnumHelper(TypescriptKeyword)
 // Typescript Builder
 // ////////////////////////////////////////////////////////////////////////////
 
+
+
 type TypescriptBuilderOptions = {
     tabsOrSpaces: 'spaces' | 'tabs'
 }
@@ -181,6 +183,8 @@ export class TypescriptBuilder {
     dedent(): TypescriptBuilder { this.indenter.dedent(); return this }
     raw(value: string): TypescriptBuilder { return this.add(value) }
     tab(): TypescriptBuilder { return this.add(this.indenter.emit()) }
+    noop(): TypescriptBuilder { return new NoopBuilder() }
+    self(): TypescriptBuilder { return this.add(TypescriptKeyword.THIS) }
 
 
     singleLineComment(...lines: string[]): TypescriptBuilder {
@@ -229,10 +233,11 @@ export class TypescriptBuilder {
     private bracked(open: () => TypescriptBuilder, close: () => TypescriptBuilder, ...builders: TypescriptBuilder[]): TypescriptBuilder {
         open()
 
-        for (let i = 0; i < builders.length; i++) {
-            this.add(builders[i].emit())
-            if (notLast(builders, i)) this.comma()
-        }
+        let bufffer = builders
+            .filter(b => !(b instanceof NoopBuilder))
+            .map(b => b.emit())
+            .join(', ')
+        this.add(bufffer)
 
         return close()
     }
@@ -272,9 +277,11 @@ export class TypescriptBuilder {
         this.indent()
 
         for (let i = 0; i < builders.length; i++) {
-            this.tab()
-            this.add(builders[i].emit())
-            if (notLast(builders, i)) this.newline()
+            if (!(builders[i] instanceof NoopBuilder)) {
+                this.tab()
+                this.add(builders[i].emit())
+                if (notLast(builders, i)) this.newline()
+            }
         }
 
         this.dedent()
@@ -310,6 +317,11 @@ export class TypescriptBuilder {
     }
 }
 
+class NoopBuilder extends TypescriptBuilder {
+    constructor(options?: Partial<TypescriptBuilderOptions>) { super(options) }
+    emit(): string { return '' }
+}
+
 function notLast<T>(arr: T[], i: number): boolean {
     return i < arr.length - 1
 }
@@ -321,4 +333,8 @@ export const b = {
     id: function (value: string) { return new TypescriptBuilder().id(value) },
     literal: function (value: string | number | boolean) { return new TypescriptBuilder().literal(value) },
     object: function (...builders: TypescriptBuilder[]) { return new TypescriptBuilder().object(...builders) },
+    ctor: function (...builders: TypescriptBuilder[]) { return new TypescriptBuilder().ctor(...builders) },
+    noop: function () { return new TypescriptBuilder().noop() },
+    body: function (...builders: TypescriptBuilder[]) { return new TypescriptBuilder().body(...builders) },
+    self: function () { return new TypescriptBuilder().self() },
 }

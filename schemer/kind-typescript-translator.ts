@@ -16,24 +16,19 @@ export class KindToTypescriptTransator {
         this.registry = registry
     }
 
-    process(kind: KindSchema) {
-
-    }
-
     emit(): string {
         const emitters: Emitter[] = []
 
         const classDef = (obj: KindSchema) => {
             const className = tsHelper.name.ts.class(obj)
             const bldr = b.o()
-
             const nil_uuid = b.id('NIL_UUID')
 
             switch (obj.kind) {
                 case 'object':
                     emitters.push(
                         b.import().curly(
-                            b.id('v4').as().id('uuid').comma(),
+                            b.id('v4').as().id('uuid'),
                             b.id('NIL').as().b(nil_uuid)
                         ).from().literal('uuid').semicolon()
                     )
@@ -45,10 +40,10 @@ export class KindToTypescriptTransator {
                     ]
                     members.push(...obj.properties.map(prop => classMembers(obj, prop)))
 
-                    const cargs = obj.properties.map(prop => classConstructor(obj, prop))
+                    const ctor = b.ctor(...obj.properties.map(prop => classCtorArgs(obj, prop)))
+                    const cbody = b.body(...obj.properties.map(prop => classCtorBody(obj, prop)))
 
-
-                    bldr.body(...members)
+                    bldr.body(...members, ctor, cbody)
                     break
                 case 'string':
                 case 'bool':
@@ -57,21 +52,21 @@ export class KindToTypescriptTransator {
                 case 'ref':
                 case 'array':
                 default:
-                    throw new Error(`kind not supported: ${obj.kind}`)
+                    throw new Error(`${classDef.name}: kind not supported: ${obj.kind}`)
             }
 
             emitters.push(bldr)
         }
 
-
-
         const classMembers = (obj: KindSchema, prop: KindSchema): TypescriptBuilder => {
             switch (prop.kind) {
                 case 'object':
-                    const bldr = b.id(tsHelper.name.ts.property(prop))
-                    if (prop.optional) bldr.question()
-                    bldr.colon().id(tsHelper.name.ts.class(prop))
-                    return bldr
+                    {
+                        const bldr = b.id(tsHelper.name.ts.property(prop))
+                        if (prop.optional) bldr.question()
+                        bldr.colon().id(tsHelper.name.ts.class(prop))
+                        return bldr
+                    }
                 case 'string':
                 case 'bool':
                 case 'float':
@@ -110,39 +105,53 @@ export class KindToTypescriptTransator {
                         bldr.square()
                         return bldr
                     }
-
                 default:
-                    throw new Error(`kind not supported: ${obj.kind}`)
+                    throw new Error(`${classMembers.name} kind not supported: ${obj.kind}`)
             }
         }
 
-        const classConstructor = (obj: KindSchema, prop: KindSchema): TypescriptBuilder => {
-            const propName = tsHelper.name.ts.property(prop)
-            const bldr = b.id(propName).colon()
+        const classCtorArgs = (obj: KindSchema, prop: KindSchema): TypescriptBuilder => {
+            if (prop.optional) return b.noop()
+
+            const bldr: TypescriptBuilder = b.id(tsHelper.name.ts.property(prop)).colon()
 
             switch (prop.kind) {
                 case 'object':
+                    bldr.colon().id(tsHelper.name.ts.class(prop))
                     break
+                case 'float':
                 case 'string':
                 case 'bool':
                 case 'int':
-                    {
-                        const typ = tsHelper.type(prop)
-                        bldr.id(typ)
-                    }
+                    bldr.id(tsHelper.type(prop))
                     break
-                case 'float':
                 case 'array':
+                    if (this.registry.isPrimitive(prop.items))
+                        bldr.id(tsHelper.type(prop.items))
+                    else
+                        bldr.id(tsHelper.name.ts.class(prop))
+                    bldr.square()
+                    break
                 case 'ref':
+                    if (this.registry.isPrimitive(prop.ref))
+                        bldr.id(tsHelper.type(prop))
+                    else
+                        bldr.id(tsHelper.name.ts.class(prop))
+                    break
                 default:
-                    throw new Error(`kind not supported: ${obj.kind}`)
+                    throw new Error(`${classCtorArgs.name} kind not supported: ${obj.kind}`)
             }
 
             return bldr
         }
 
-        this.registry.registry.forEach((kind) => classDef(kind))
+        const classCtorBody = (obj: KindSchema, prop: KindSchema): TypescriptBuilder => {
+            if (prop.optional) return b.noop()
+            const name = tsHelper.name.ts.property(prop)
+            return b.self().dot().id(name).equals().id(name)
+        }
 
+        this.registry.registry.forEach((kind) => classDef(kind))
         return emitters.map(e => e.emit()).join('\n\n')
     }
 }
