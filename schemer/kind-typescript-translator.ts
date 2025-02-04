@@ -58,12 +58,13 @@ export class KindToTypescriptTransator {
             emitters.push(bldr)
         }
 
-        const classMembers = (obj: KindSchema, prop: KindSchema): TypescriptBuilder => {
+        const classMembers = (obj: ObjectSchema, prop: KindSchema): TypescriptBuilder => {
             switch (prop.kind) {
                 case 'object':
                     {
                         const bldr = b.id(tsHelper.name.ts.property(prop))
                         if (prop.optional) bldr.question()
+
                         bldr.colon().id(tsHelper.name.ts.class(prop))
                         return bldr
                     }
@@ -110,7 +111,7 @@ export class KindToTypescriptTransator {
             }
         }
 
-        const classCtorArgs = (obj: KindSchema, prop: KindSchema): TypescriptBuilder => {
+        const classCtorArgs = (obj: ObjectSchema, prop: KindSchema): TypescriptBuilder => {
             if (prop.optional) return b.noop()
 
             const bldr: TypescriptBuilder = b.id(tsHelper.name.ts.property(prop)).colon()
@@ -145,10 +146,51 @@ export class KindToTypescriptTransator {
             return bldr
         }
 
-        const classCtorBody = (obj: KindSchema, prop: KindSchema): TypescriptBuilder => {
+        const classCtorBody = (obj: ObjectSchema, prop: KindSchema): TypescriptBuilder => {
             if (prop.optional) return b.noop()
             const name = tsHelper.name.ts.property(prop)
             return b.self().dot().id(name).equals().id(name)
+        }
+
+        const zodStatement = (obj: ObjectSchema): TypescriptBuilder => {
+            const statement: TypescriptBuilder = b.export().const().id(tsHelper.name.zod.property(obj))
+
+
+            const zodProperty = (obj: KindSchema, prop: KindSchema): TypescriptBuilder => {
+                const property: TypescriptBuilder = b.id(tsHelper.name.ts.property(prop))
+
+                switch (prop.kind) {
+                    case 'object':
+                        property.id(tsHelper.name.zod.property(prop))
+                        break
+                    case 'float':
+                    case 'string':
+                    case 'bool':
+                    case 'int':
+
+                        break
+                    case 'array':
+                        if (this.registry.isPrimitive(prop.items))
+                            statement.id(tsHelper.type(prop.items))
+                        else
+                            statement.id(tsHelper.name.ts.class(prop))
+                        statement.square()
+                        break
+                    case 'ref':
+                        if (this.registry.isPrimitive(prop.ref))
+                            statement.id(tsHelper.type(prop))
+                        else
+                            statement.id(tsHelper.name.ts.class(prop))
+                        break
+                    default:
+                        throw new Error(`${classCtorArgs.name} kind not supported: ${obj.kind}`)
+                }
+
+                return property
+            }
+
+            const properties: TypescriptBuilder[] = obj.properties.map(prop => zodProperty(obj, prop))
+            return statement.chain(b.id('z'), b.id('object').object(...properties))
         }
 
         this.registry.registry.forEach((kind) => classDef(kind))

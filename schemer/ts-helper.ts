@@ -337,4 +337,5 @@ export const b = {
     noop: function () { return new TypescriptBuilder().noop() },
     body: function (...builders: TypescriptBuilder[]) { return new TypescriptBuilder().body(...builders) },
     self: function () { return new TypescriptBuilder().self() },
+    const: function () { return new TypescriptBuilder().const() }
 }
