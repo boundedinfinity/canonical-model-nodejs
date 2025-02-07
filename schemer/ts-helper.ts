@@ -322,6 +322,19 @@ class NoopBuilder extends TypescriptBuilder {
     emit(): string { return '' }
 }
 
+class ChainBuilder extends TypescriptBuilder {
+    builders: TypescriptBuilder[] = []
+    constructor(options?: Partial<TypescriptBuilderOptions>) { super(options) }
+    emit(): string {
+        for (let i = 0; i < this.builders.length; i++) {
+            this.add(this.builders[i].emit())
+            if (notLast(this.builders, i)) this.dot()
+        }
+
+        return this.buffer
+    }
+}
+
 function notLast<T>(arr: T[], i: number): boolean {
     return i < arr.length - 1
 }
@@ -337,5 +350,6 @@ export const b = {
     noop: function () { return new TypescriptBuilder().noop() },
     body: function (...builders: TypescriptBuilder[]) { return new TypescriptBuilder().body(...builders) },
     self: function () { return new TypescriptBuilder().self() },
-    const: function () { return new TypescriptBuilder().const() }
+    const: function () { return new TypescriptBuilder().const() },
+    newline: function () { return new TypescriptBuilder().newline() }
 }

@@ -43,6 +43,7 @@ export class KindToTypescriptTransator {
                     const ctor = b.ctor(...obj.properties.map(prop => classCtorArgs(obj, prop)))
                     const cbody = b.body(...obj.properties.map(prop => classCtorBody(obj, prop)))
 
+
                     bldr.body(...members, ctor, cbody)
                     break
                 case 'string':
@@ -153,35 +154,43 @@ export class KindToTypescriptTransator {
         }
 
         const zodStatement = (obj: ObjectSchema): TypescriptBuilder => {
-            const statement: TypescriptBuilder = b.export().const().id(tsHelper.name.zod.property(obj))
+            const statement: TypescriptBuilder = b.export().const().id(tsHelper.name.zod.schema(obj)).equals()
 
-
-            const zodProperty = (obj: KindSchema, prop: KindSchema): TypescriptBuilder => {
-                const property: TypescriptBuilder = b.id(tsHelper.name.ts.property(prop))
+            const zodProperty = (obj: KindSchema, prop: KindSchema, name?: boolean): TypescriptBuilder => {
+                const property: TypescriptBuilder = b.o()
+                if (name) b.id(tsHelper.name.ts.property(prop)).colon()
 
                 switch (prop.kind) {
                     case 'object':
-                        property.id(tsHelper.name.zod.property(prop))
+                        property.id(tsHelper.name.zod.schema(prop))
                         break
                     case 'float':
                     case 'string':
+                        {
+                            const chain: TypescriptBuilder[] = [b.id('z'), b.id('string').parens()]
+                            if (prop.min) chain.push(b.id('min').parens(b.literal(prop.min)))
+                            if (prop.max) chain.push(b.id('max').parens(b.literal(prop.max)))
+                            // if (prop.includes) chain.push(b.id('includes').parens(b.literal(prop.includes)))
+                            if (prop.optional) chain.push(b.id('optional').parens())
+                            property.chain(...chain)
+                        }
+                        break
                     case 'bool':
                     case 'int':
 
                         break
                     case 'array':
-                        if (this.registry.isPrimitive(prop.items))
-                            statement.id(tsHelper.type(prop.items))
-                        else
-                            statement.id(tsHelper.name.ts.class(prop))
-                        statement.square()
+                        {
+                            const chain: TypescriptBuilder[] = [
+                                b.id('z'),
+                                b.id('array').parens(zodProperty(obj, prop.items, false)),
+                            ]
+                            if (prop.optional) chain.push(b.id('optional').parens())
+                            property.chain(...chain)
+                        }
                         break
                     case 'ref':
-                        if (this.registry.isPrimitive(prop.ref))
-                            statement.id(tsHelper.type(prop))
-                        else
-                            statement.id(tsHelper.name.ts.class(prop))
-                        break
+                        return zodProperty(obj, prop.ref, name)
                     default:
                         throw new Error(`${classCtorArgs.name} kind not supported: ${obj.kind}`)
                 }
@@ -190,10 +199,19 @@ export class KindToTypescriptTransator {
             }
 
             const properties: TypescriptBuilder[] = obj.properties.map(prop => zodProperty(obj, prop))
-            return statement.chain(b.id('z'), b.id('object').object(...properties))
+            return statement.chain(b.id('z'), b.id('object').parens(b.object(...properties)))
         }
 
         this.registry.registry.forEach((kind) => classDef(kind))
+        emitters.push(...this.registry.registry.values().map((kind) => {
+            switch (kind.kind) {
+                case 'object':
+                    return zodStatement(kind)
+                default:
+                    throw new Error(`${classDef.name}: kind not supported: ${kind.kind}`)
+            }
+        }))
+
         return emitters.map(e => e.emit()).join('\n\n')
     }
 }
