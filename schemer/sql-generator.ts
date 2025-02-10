@@ -1,12 +1,9 @@
 import { Indenter, Emitter, EnumHelper } from './utils'
 
-
 const config = {
     newline: '\n',
     wrapName: (name: string) => '`' + name + '`',
 }
-
-
 
 // ////////////////////////////////////////////////////////////////////////////
 // SQL Generator
@@ -69,19 +66,22 @@ export const sqlUtil = {
     },
 }
 
+export enum SqlDialect { SQLITE = 'sqlite', MYSQL = 'mysql', POSTGRESQL = 'postgresql' }
+export const SqlDialects = new EnumHelper(SqlDialect)
+
 export type SqlGeneratorOptions = {
     arraySep: string
     joinSep: string
-}
-
-const defaultOptions: SqlGeneratorOptions = {
-    arraySep: '__array',
-    joinSep: '__join__',
+    dialect: SqlDialect
 }
 
 export class SqlGenerator {
     databases: SqlDatabase[] = []
-    options: SqlGeneratorOptions = defaultOptions
+    options: SqlGeneratorOptions = {
+        arraySep: '__array',
+        joinSep: '__join__',
+        dialect: SqlDialect.SQLITE,
+    }
 
     constructor(options?: Partial<SqlGeneratorOptions>) {
         this.options = { ...this.options, ...options }
