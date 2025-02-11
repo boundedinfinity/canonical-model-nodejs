@@ -1,5 +1,12 @@
 
 
+export interface Serializer<T> {
+    canHandleRaw(s: string): boolean
+    canHandleType(a: any): boolean
+    serialize(t: T): string
+    deserialize(s: string): T
+}
+
 export interface Message {
     kind: string
 }
@@ -9,35 +16,47 @@ export type ReceiveHandler = {
     handle: (message: Message) => void
 }
 
-export type SendHandler = (message: Message) => void
-export type ErrorHandler = (raw: string, err: any) => void
+export type SendHandler = (message: any) => void
+export type ErrorHandler = (err: Error) => void
 export type FactoryHandler = { kind: string, factory: () => Message }
 export type MessengerOptions = {}
 
 export class Messenger {
     options: MessengerOptions = {}
+    private serializers: Serializer<any>[] = []
     private receiveHandlers: ReceiveHandler[] = []
     private sendHandlers: SendHandler[] = []
     private errorHandlers: ErrorHandler[] = []
-    private factoryHandlers = new Map<string, () => Message>()
 
     constructor(options?: MessengerOptions) {
         this.options = { ...this.options, ...options }
     }
 
-    registerFactory(kind: string, factory: () => Message) {
-        this.factoryHandlers.set(kind, factory)
+    registerSerializer(serializer: Serializer<any>) {
+        this.serializers.push(serializer)
     }
 
-    error(raw: string, err: any) {
-        this.errorHandlers.forEach(handler => handler(raw, err))
+    error(err: Error) {
+        this.errorHandlers.forEach(handler => handler(err))
     }
 
     registerErrorHandler(handler: ErrorHandler) {
         this.errorHandlers.push(handler)
     }
 
-    send(data: Message) {
+    serialize(message: object): string | undefined {
+        const serializer = this.serializers.find(serializer => serializer.canHandleType(message))
+
+        if (!serializer) {
+            const err = new Error(`unable to serialize message: ${JSON.stringify(message)}`)
+            this.error(err)
+            return
+        }
+
+        return serializer.serialize(message)
+    }
+
+    send(data: object) {
         this.sendHandlers.forEach(handler => handler(data))
     }
 
@@ -46,18 +65,15 @@ export class Messenger {
     }
 
     receive(raw: string) {
-        let message: Message = JSON.parse(raw)
+        const serializer = this.serializers.find(serializer => serializer.canHandleRaw(raw))
 
-        if (!message.kind) {
-            this.errorHandlers.forEach(handler => handler(raw, new Error('No kind provided')))
+        if (!serializer) {
+            const err = new Error(`unable to handle message ${raw}`)
+            this.error(err)
             return
         }
 
-        if (this.factoryHandlers.has(message.kind)) {
-            const inst = this.factoryHandlers.get(message.kind)!()
-            Object.assign(inst, message)
-            message = inst
-        }
+        const message = serializer.deserialize(raw)
 
         try {
             this.receiveHandlers
@@ -66,7 +82,10 @@ export class Messenger {
                         handler.options?.kinds?.includes('*'))
                 .forEach(handler => handler.handle(message))
         } catch (err) {
-            this.errorHandlers.forEach(handler => handler(raw, err))
+            if (err instanceof Error)
+                this.error(err)
+            else
+                this.error(new Error(`${err}`))
         }
     }
 

@@ -1,0 +1,4 @@
+{ "kind": "label", "id": "1B5826EC-D7BE-4FE3-B9BE-58EE0EF01781", "name": "Friends" }
+{ "kind": "label", "id": "24BABF0F-E313-4B68-A6B8-DA4AE38E8C20", "name": "Family" }
+{ "kind": "label", "id": "6931509D-2597-4022-B295-A16CAE5DE9F1", "name": "Work" }
+{ "kind": "label-group", "id": "6DBF7D1A-4F73-47A0-ABEC-D42E79797E51", "name": "Frends and Family", "labels": ["1B5826EC-D7BE-4FE3-B9BE-58EE0EF01781", "24BABF0F-E313-4B68-A6B8-DA4AE38E8C20"] }

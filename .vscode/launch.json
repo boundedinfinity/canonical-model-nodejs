@@ -20,7 +20,10 @@
             "internalConsoleOptions": "neverOpen",
             "request": "launch",
             "program": "${file}",
-            "cwd": "${workspaceFolder}/schemer",
+            "cwd": "${workspaceFolder}",
+            "env": {
+                "WORKSPACE_FOLDER": "${workspaceFolder}"
+            },
             "stopOnEntry": false,
             "watchMode": false,
         }

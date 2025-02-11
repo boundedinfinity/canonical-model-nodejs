@@ -1,9 +1,10 @@
 import { Label } from './label'
-import { type StringQuery } from './helper'
-import { type LabelQuery } from './label'
+import { type StringQuery, queryUtils } from './helper'
+import { type LabelQuery, type LabelStore } from './label'
+import { type Serializer } from './messenger'
 
 export class LabelGroup {
-    kind = this.constructor.name.toLocaleLowerCase()
+    static kind = 'label-group'
     id?: string
     name?: string
     description?: string
@@ -30,19 +31,77 @@ export class LabelGroup {
             labelIds: this.labels?.map(label => label.id)
         }
     }
+
+    matches(query?: LabelGroupQuery): boolean {
+        if (!query) return false
+        return queryUtils.query.string.found({ value: this.id, query: query.id })
+            || queryUtils.query.string.found({ value: this.name, query: query.name })
+            || queryUtils.query.string.found({ value: this.description, query: query.description })
+            || this.labels?.some(label => label.matches(query.label))
+            || false
+    }
 }
 
 export type LabeLGroupSerializerOptions = {
+    typed: boolean
+    formatted: boolean | number
     labelIds: boolean
 }
 
-export class LabeLGroupSerializer {
+export class LabelGroupSerializer implements Serializer<LabelGroup> {
     options: LabeLGroupSerializerOptions = {
+        typed: true,
+        formatted: true,
         labelIds: true
     }
 
-    constructor(options?: LabeLGroupSerializerOptions) {
+    constructor(options?: Partial<LabeLGroupSerializerOptions>) {
         this.options = { ...this.options, ...options }
+    }
+
+    canHandleRaw(raw: string): boolean {
+        const obj = JSON.parse(raw)
+        return obj.kind && obj.kind === LabelGroup.kind || false
+    }
+
+    canHandleType(typ: any): boolean {
+        return typ instanceof LabelGroup
+    }
+
+    serialize(labelGroup: LabelGroup): string {
+        let obj: Record<string, any> = {
+            id: labelGroup.id,
+            name: labelGroup.name,
+            description: labelGroup.description,
+            labels: labelGroup.labels?.map(label => label.id)
+        }
+
+        if (this.options.typed)
+            obj.kind = Label.kind
+
+        let formatted: number | undefined
+
+        switch (typeof this.options.formatted) {
+            case "number":
+                formatted = this.options.formatted
+                break
+            case "boolean":
+                formatted = 4
+                break
+        }
+
+        return JSON.stringify(obj, null, formatted)
+    }
+
+    deserialize(raw: string): LabelGroup {
+        const obj = JSON.parse(raw)
+
+        obj['labelIds'] = obj['labels']
+        delete obj['labels']
+
+        const inst = new LabelGroup()
+        Object.assign(inst, obj)
+        return inst
     }
 }
 
@@ -58,7 +117,7 @@ export type LabelGroupQuery = {
     id?: string
     name?: StringQuery
     description?: StringQuery
-    label: LabelQuery
+    label?: LabelQuery
     load?: LabelGroupLoadOptions
 }
 
@@ -70,32 +129,57 @@ export interface LabelGroupStore {
 }
 
 export class MemoryLabelGroupStore implements LabelGroupStore {
+    private labelStore: LabelStore
     private labelGroups: LabelGroup[] = []
     options: LabeGroupStoreOptions = {}
 
-    constructor(options?: LabeGroupStoreOptions) {
+    constructor(labelStore: LabelStore, options?: LabeGroupStoreOptions) {
+        this.labelStore = labelStore
         this.options = { ...this.options, ...options }
     }
 
     findMany(query: LabelGroupQuery): LabelGroup[] {
-        const found: LabelGroup[] = []
-
-        this.labelGroups.forEach(v => {
-            if (query.id == v.id) found.push(v)
-        })
-
-        return found
+        return this.labelGroups
+            .filter(labelGroup => labelGroup.matches(query))
+            .map(labelGroup => {
+                if (query.load) this.load(labelGroup, query.load)
+                return labelGroup
+            })
     }
 
     findOne(query: LabelGroupQuery): LabelGroup | undefined {
         const found = this.findMany(query)
-        return found.length > 0 ? found[0] : undefined
+        switch (found.length) {
+            case 0:
+                return undefined
+            case 1:
+                return found[0]
+            default:
+                throw new Error('found more than one label group')
+        }
     }
 
-    save(labelGroup: LabelGroup): void {
-        let found = this.findOne
+    save(...labelGroups: LabelGroup[]): void {
+        labelGroups.forEach(labelGroup => {
+            const existing = this.findOne({ id: labelGroup.id })
+            if (existing) {
+                Object.assign(existing, labelGroup)
+            } else {
+                this.labelGroups.push(labelGroup)
+            }
+        })
     }
 
-    load(abelGroup: LabelGroup, options: LabelGroupLoadOptions): void {
+    load(labelGroup: LabelGroup, options: LabelGroupLoadOptions): void {
+        const found = this.findOne({ id: labelGroup.id })
+        if (found) {
+            if (options.labels) {
+                if (!found.labels) found.labels = []
+
+                found.labelIds?.forEach(id => {
+                    found.labels?.push(...this.labelStore.findMany({ id }));
+                })
+            }
+        }
     }
 }
